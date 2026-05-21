@@ -1,424 +1,860 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "./lib/supabase";
+import React, { useEffect, useMemo, useState } from "react"
+import { supabase } from "./lib/supabase"
+
+const OPERATOR_PIN = import.meta.env.VITE_OPERATOR_PIN || "2400"
 
 export default function App() {
-  const [mode, setModeState] = useState(() => {
-    return localStorage.getItem("paythai_mode") || "customer";
-  });
+  const [view, setView] = useState(() => {
+    return localStorage.getItem("paythai_view") || "customer"
+  })
 
-  const setMode = (nextMode) => {
-    localStorage.setItem("paythai_mode", nextMode);
-    setModeState(nextMode);
-  };
+  const [operatorUnlocked, setOperatorUnlocked] = useState(() => {
+    return localStorage.getItem("paythai_operator_unlocked") === "yes"
+  })
 
-  const [form, setForm] = useState({
+  const [operatorPinInput, setOperatorPinInput] = useState("")
+  const [operatorError, setOperatorError] = useState("")
+
+  const [requests, setRequests] = useState([])
+  const [search, setSearch] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [preview, setPreview] = useState(null)
+
+  const [trackingSearch, setTrackingSearch] = useState("")
+  const [trackingResult, setTrackingResult] = useState(null)
+  const [trackingMessage, setTrackingMessage] = useState("")
+
+  const [formData, setFormData] = useState({
     customer_name: "",
     customer_email: "",
     customer_phone: "",
     amount_thb: "",
     payment_method: "Card",
     invoice_note: "",
-  });
+  })
 
-  const [qrFile, setQrFile] = useState(null);
-  const [requests, setRequests] = useState([]);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
-  const [viewerUrl, setViewerUrl] = useState("");
-  const [viewerTitle, setViewerTitle] = useState("");
+  const [qrFile, setQrFile] = useState(null)
+  const [successMessage, setSuccessMessage] = useState("")
 
-  const loadRequests = async () => {
+  useEffect(() => {
+    localStorage.setItem("paythai_view", view)
+  }, [view])
+
+  async function fetchRequests() {
     const { data, error } = await supabase
       .from("payment_requests")
       .select("*")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
 
-    if (!error) setRequests(data || []);
-  };
+    if (error) {
+      console.error(error)
+      return
+    }
+
+    setRequests(data || [])
+  }
 
   useEffect(() => {
-    loadRequests();
+    fetchRequests()
 
     const channel = supabase
-      .channel("payment_requests_live")
+      .channel("payment-live")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "payment_requests" },
-        () => loadRequests()
+        {
+          event: "*",
+          schema: "public",
+          table: "payment_requests",
+        },
+        () => {
+          fetchRequests()
+        }
       )
-      .subscribe();
+      .subscribe()
 
     return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+      supabase.removeChannel(channel)
+    }
+  }, [])
 
-  const filteredRequests = useMemo(() => {
-    return requests.filter((req) => {
-      const matchesStatus =
-        statusFilter === "all" || req.status === statusFilter;
+  async function uploadQrImage(file) {
+    if (!file) return null
 
-      const q = search.toLowerCase();
-      const matchesSearch =
-        !q ||
-        String(req.customer_name || "").toLowerCase().includes(q) ||
-        String(req.customer_email || "").toLowerCase().includes(q) ||
-        String(req.customer_phone || "").toLowerCase().includes(q) ||
-        String(req.amount_thb || "").toLowerCase().includes(q);
-
-      return matchesStatus && matchesSearch;
-    });
-  }, [requests, statusFilter, search]);
-
-  const counts = useMemo(() => {
-    return {
-      all: requests.length,
-      pending: requests.filter((r) => r.status === "pending").length,
-      processing: requests.filter((r) => r.status === "processing").length,
-      paid: requests.filter((r) => r.status === "paid").length,
-      failed: requests.filter((r) => r.status === "failed").length,
-    };
-  }, [requests]);
-
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
-  const uploadFile = async (file, folder) => {
-    if (!file) return "";
-
-    const fileExt = file.name.split(".").pop();
-    const fileName = `${folder}/${Date.now()}-${Math.random()
+    const fileExt = file.name.split(".").pop()
+    const fileName = `qr-${Date.now()}-${Math.random()
       .toString(36)
-      .slice(2)}.${fileExt}`;
+      .slice(2)}.${fileExt}`
 
     const { error } = await supabase.storage
       .from("payment-files")
-      .upload(fileName, file);
+      .upload(fileName, file)
 
     if (error) {
-      console.log("UPLOAD ERROR:", error);
-      return "";
+      console.error(error)
+      return null
     }
 
     const { data } = supabase.storage
       .from("payment-files")
-      .getPublicUrl(fileName);
+      .getPublicUrl(fileName)
 
-    return data.publicUrl;
-  };
+    return data.publicUrl
+  }
 
-  const submitPaymentRequest = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setMessage("");
+  async function submitRequest(e) {
+    e.preventDefault()
+    setLoading(true)
+    setSuccessMessage("")
 
-    const qrUrl = await uploadFile(qrFile, "qr-uploads");
+    try {
+      let qrUrl = null
 
-    const { error } = await supabase.from("payment_requests").insert([
-      {
-        customer_name: form.customer_name,
-        customer_email: form.customer_email,
-        customer_phone: form.customer_phone,
-        amount_thb: Number(form.amount_thb),
-        payment_method: form.payment_method,
-        invoice_note: form.invoice_note,
-        qr_image_url: qrUrl,
-        status: "pending",
-      },
-    ]);
+      if (qrFile) {
+        qrUrl = await uploadQrImage(qrFile)
+      }
 
-    if (error) {
-      console.log("INSERT ERROR:", error);
-      setMessage("❌ Request failed. Please check details and try again.");
-    } else {
-      setMessage("✅ Payment request submitted. We will confirm shortly.");
-      setForm({
+      const trackingId =
+        "PT-" + Math.floor(100000 + Math.random() * 900000)
+
+      const { error } = await supabase.from("payment_requests").insert([
+        {
+          ...formData,
+          qr_image_url: qrUrl,
+          status: "pending",
+          tracking_id: trackingId,
+        },
+      ])
+
+      if (error) {
+        console.error(error)
+        alert("Submission failed")
+        return
+      }
+
+      setSuccessMessage(
+        `✅ Payment request submitted successfully. Tracking ID: ${trackingId}`
+      )
+
+      setTrackingSearch(trackingId)
+
+      setFormData({
         customer_name: "",
         customer_email: "",
         customer_phone: "",
         amount_thb: "",
         payment_method: "Card",
         invoice_note: "",
-      });
-      setQrFile(null);
-      await loadRequests();
+      })
+
+      setQrFile(null)
+      fetchRequests()
+    } catch (err) {
+      console.error(err)
+      alert("Unexpected error")
     }
 
-    setLoading(false);
-  };
+    setLoading(false)
+  }
 
-  const updateStatus = async (id, status) => {
+  async function updateStatus(request, status) {
+    const updatePayload = { status }
+
+    if (status === "paid") {
+      updatePayload.paid_at = new Date().toISOString()
+    }
+
     const { error } = await supabase
       .from("payment_requests")
-      .update({ status })
-      .eq("id", id);
+      .update(updatePayload)
+      .eq("id", request.id)
 
-    if (!error) await loadRequests();
-  };
+    if (error) {
+      console.error(error)
+      alert("Status update failed")
+      return
+    }
 
-  const uploadReceipt = async (id, file) => {
-    const receiptUrl = await uploadFile(file, "receipts");
-    if (!receiptUrl) return;
+    /*
+      FINAL EMAIL HOOK:
+      Later we connect Supabase Edge Function here.
+      When status === "paid", send one final email with receipt link.
+      After email succeeds, update email_sent_at.
+    */
 
-    const { error } = await supabase
+    fetchRequests()
+  }
+
+  async function uploadReceipt(request, file) {
+    if (!file) return
+    if (request.receipt_url || request.status === "paid") return
+
+    const fileExt = file.name.split(".").pop()
+    const fileName = `receipt-${request.id}-${Date.now()}.${fileExt}`
+
+    const { error: uploadError } = await supabase.storage
+      .from("payment-files")
+      .upload(fileName, file)
+
+    if (uploadError) {
+      console.error(uploadError)
+      alert("Receipt upload failed")
+      return
+    }
+
+    const { data } = supabase.storage
+      .from("payment-files")
+      .getPublicUrl(fileName)
+
+    const publicUrl = data.publicUrl
+
+    const { error: updateError } = await supabase
       .from("payment_requests")
       .update({
-        receipt_url: receiptUrl,
-        status: "processing",
+        receipt_url: publicUrl,
+        status: request.status === "pending" ? "processing" : request.status,
       })
-      .eq("id", id);
+      .eq("id", request.id)
 
-    if (!error) await loadRequests();
-  };
+    if (updateError) {
+      console.error(updateError)
+      alert("Receipt saved, but database update failed")
+      return
+    }
 
-  const openViewer = (url, title) => {
-    setViewerUrl(url);
-    setViewerTitle(title);
-  };
+    fetchRequests()
+  }
 
-  const closeViewer = () => {
-    setViewerUrl("");
-    setViewerTitle("");
-  };
+  async function lookupTracking(e) {
+    e.preventDefault()
+    setTrackingResult(null)
+    setTrackingMessage("")
 
-  const statusColor = (status) => {
-    if (status === "paid") return "#16a34a";
-    if (status === "processing") return "#f59e0b";
-    if (status === "failed") return "#dc2626";
-    return "#2563eb";
-  };
+    const cleaned = trackingSearch.trim().toUpperCase()
 
-  const formatTime = (dateString) => {
-    if (!dateString) return "No timestamp";
-    return new Date(dateString).toLocaleString();
-  };
+    if (!cleaned) {
+      setTrackingMessage("Enter your tracking ID.")
+      return
+    }
 
-  const StatusButton = ({ req, status, children, danger }) => {
-    const locked = req.status === "paid" || req.status === "failed";
-    const active = req.status === status;
+    const { data, error } = await supabase
+      .from("payment_requests")
+      .select("*")
+      .eq("tracking_id", cleaned)
+      .maybeSingle()
 
-    return (
-      <button
-        disabled={locked}
-        onClick={() => updateStatus(req.id, status)}
-        style={{
-          ...smallButton,
-          background: danger ? "#ef4444" : active ? "#94a3b8" : "#0ea5e9",
-          cursor: locked ? "not-allowed" : "pointer",
-          opacity: locked && !active ? 0.45 : active ? 0.7 : 1,
-        }}
-      >
-        {active ? `✓ ${children}` : children}
-      </button>
-    );
-  };
+    if (error) {
+      console.error(error)
+      setTrackingMessage("Could not check status. Try again.")
+      return
+    }
+
+    if (!data) {
+      setTrackingMessage("No request found for this tracking ID.")
+      return
+    }
+
+    setTrackingResult(data)
+  }
+
+  function loginOperator(e) {
+    e.preventDefault()
+    setOperatorError("")
+
+    if (operatorPinInput === OPERATOR_PIN) {
+      localStorage.setItem("paythai_operator_unlocked", "yes")
+      setOperatorUnlocked(true)
+      setOperatorPinInput("")
+    } else {
+      setOperatorError("Wrong operator PIN.")
+    }
+  }
+
+  function logoutOperator() {
+    localStorage.removeItem("paythai_operator_unlocked")
+    setOperatorUnlocked(false)
+    setView("customer")
+  }
+
+  const filteredRequests = useMemo(() => {
+    return requests.filter((r) => {
+      const value = `
+        ${r.customer_name || ""}
+        ${r.customer_email || ""}
+        ${r.customer_phone || ""}
+        ${r.amount_thb || ""}
+        ${r.tracking_id || ""}
+      `
+        .toLowerCase()
+        .trim()
+
+      return value.includes(search.toLowerCase())
+    })
+  }, [requests, search])
+
+  const counts = {
+    all: requests.length,
+    pending: requests.filter((r) => r.status === "pending").length,
+    processing: requests.filter((r) => r.status === "processing").length,
+    paid: requests.filter((r) => r.status === "paid").length,
+    failed: requests.filter((r) => r.status === "failed").length,
+  }
 
   return (
-    <div style={pageStyle}>
-      <header style={topBar}>
-        <div>
-          <strong style={{ fontSize: 22 }}>PayThai</strong>
-          <span style={miniText}> paythai.online</span>
+    <div className="min-h-screen bg-slate-100 p-4 md:p-6">
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-white rounded-2xl shadow-sm p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold">
+              PayThai{" "}
+              <span className="text-sm text-gray-400">paythai.online</span>
+            </h1>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => setView("customer")}
+              className={`px-4 py-2 rounded-xl font-semibold ${
+                view === "customer"
+                  ? "bg-sky-500 text-white"
+                  : "bg-gray-100"
+              }`}
+            >
+              Customer
+            </button>
+
+            <button
+              onClick={() => setView("operator")}
+              className={`px-4 py-2 rounded-xl font-semibold ${
+                view === "operator"
+                  ? "bg-sky-500 text-white"
+                  : "bg-gray-100"
+              }`}
+            >
+              Operator
+            </button>
+
+            {operatorUnlocked && (
+              <button
+                onClick={logoutOperator}
+                className="px-4 py-2 rounded-xl font-semibold bg-gray-800 text-white"
+              >
+                Lock
+              </button>
+            )}
+          </div>
         </div>
 
-        <div style={modeSwitch}>
-          <button onClick={() => setMode("customer")} style={mode === "customer" ? activeModeButton : modeButton}>
-            Customer
-          </button>
-          <button onClick={() => setMode("operator")} style={mode === "operator" ? activeModeButton : modeButton}>
-            Operator
-          </button>
-        </div>
-      </header>
+        {view === "customer" && (
+          <div className="grid lg:grid-cols-2 gap-6">
+            <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm">
+              <div className="bg-sky-500 text-white w-10 h-10 rounded-xl flex items-center justify-center font-bold mb-6">
+                QR
+              </div>
 
-      {mode === "customer" ? (
-        <main style={customerWrap}>
-          <section style={heroCard}>
-            <div style={logoBox}>QR</div>
-            <h1 style={heroTitle}>Pay Thai QR bills without a Thai bank account.</h1>
-            <p style={heroSubtitle}>
-              Upload a Thai QR, invoice, condo bill, or payment note. PayThai helps coordinate the payment and confirmation.
+              <h2 className="text-4xl md:text-5xl font-bold leading-tight mb-6">
+                Pay Thai QR bills without a Thai bank account.
+              </h2>
+
+              <p className="text-gray-600 mb-6">
+                Upload a Thai QR, invoice, condo bill, or payment note. PayThai
+                helps coordinate the payment and confirmation.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
+                  No Thai bank needed
+                </div>
+
+                <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
+                  QR / invoice upload
+                </div>
+
+                <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
+                  Receipt tracking
+                </div>
+              </div>
+
+              <div className="mt-8 bg-slate-50 rounded-3xl p-5">
+                <h3 className="text-2xl font-bold mb-2">Track Payment</h3>
+                <p className="text-gray-500 mb-4">
+                  Enter your tracking ID to check payment status and receipt.
+                </p>
+
+                <form
+                  onSubmit={lookupTracking}
+                  className="flex flex-col sm:flex-row gap-3"
+                >
+                  <input
+                    value={trackingSearch}
+                    onChange={(e) => setTrackingSearch(e.target.value)}
+                    placeholder="Example: PT-123456"
+                    className="flex-1 border rounded-xl p-4 uppercase"
+                  />
+
+                  <button className="bg-sky-500 text-white font-bold px-5 py-4 rounded-xl">
+                    Check Status
+                  </button>
+                </form>
+
+                {trackingMessage && (
+                  <div className="mt-4 bg-yellow-100 text-yellow-800 rounded-xl p-4 font-semibold">
+                    {trackingMessage}
+                  </div>
+                )}
+
+                {trackingResult && (
+                  <div className="mt-4 bg-white rounded-2xl p-5 border">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-lg">
+                          Tracking ID: {trackingResult.tracking_id}
+                        </p>
+                        <p className="text-gray-600">
+                          Amount: ฿{trackingResult.amount_thb}
+                        </p>
+                        <p className="text-gray-600">
+                          Method: {trackingResult.payment_method}
+                        </p>
+                      </div>
+
+                      <span
+                        className={`px-4 py-2 rounded-full text-white font-bold capitalize ${
+                          trackingResult.status === "paid"
+                            ? "bg-green-500"
+                            : trackingResult.status === "processing"
+                            ? "bg-orange-500"
+                            : trackingResult.status === "failed"
+                            ? "bg-red-500"
+                            : "bg-blue-500"
+                        }`}
+                      >
+                        {trackingResult.status}
+                      </span>
+                    </div>
+
+                    {trackingResult.status === "paid" &&
+                      trackingResult.receipt_url && (
+                        <button
+                          onClick={() =>
+                            setPreview({
+                              title: "Payment Receipt",
+                              url: trackingResult.receipt_url,
+                            })
+                          }
+                          className="mt-4 bg-green-500 text-white px-5 py-3 rounded-xl font-bold"
+                        >
+                          View Receipt
+                        </button>
+                      )}
+
+                    {trackingResult.status !== "paid" && (
+                      <p className="mt-4 text-gray-500">
+                        Your request is still being handled. Final confirmation
+                        will be sent after payment is completed.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm">
+              <h2 className="text-3xl font-bold mb-2">
+                Submit Payment Request
+              </h2>
+
+              <p className="text-gray-500 mb-6">
+                Use this when a Thai QR payment is required.
+              </p>
+
+              <form onSubmit={submitRequest} className="space-y-4">
+                <input
+                  type="text"
+                  placeholder="Your name"
+                  value={formData.customer_name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, customer_name: e.target.value })
+                  }
+                  className="w-full border rounded-xl p-4"
+                  required
+                />
+
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={formData.customer_email}
+                  onChange={(e) =>
+                    setFormData({ ...formData, customer_email: e.target.value })
+                  }
+                  className="w-full border rounded-xl p-4"
+                  required
+                />
+
+                <input
+                  type="text"
+                  placeholder="Phone / WhatsApp"
+                  value={formData.customer_phone}
+                  onChange={(e) =>
+                    setFormData({ ...formData, customer_phone: e.target.value })
+                  }
+                  className="w-full border rounded-xl p-4"
+                  required
+                />
+
+                <input
+                  type="number"
+                  placeholder="Amount in THB"
+                  value={formData.amount_thb}
+                  onChange={(e) =>
+                    setFormData({ ...formData, amount_thb: e.target.value })
+                  }
+                  className="w-full border rounded-xl p-4"
+                  required
+                />
+
+                <select
+                  value={formData.payment_method}
+                  onChange={(e) =>
+                    setFormData({ ...formData, payment_method: e.target.value })
+                  }
+                  className="w-full border rounded-xl p-4"
+                >
+                  <option>Card</option>
+                  <option>Crypto</option>
+                </select>
+
+                <textarea
+                  placeholder="Condo name, room number, invoice note, or payment details"
+                  value={formData.invoice_note}
+                  onChange={(e) =>
+                    setFormData({ ...formData, invoice_note: e.target.value })
+                  }
+                  className="w-full border rounded-xl p-4 h-32"
+                />
+
+                <div>
+                  <p className="font-semibold mb-2 text-sm">
+                    Take photo or upload Thai QR / invoice
+                  </p>
+
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    capture="environment"
+                    onChange={(e) => setQrFile(e.target.files[0])}
+                    className="w-full border rounded-xl p-3"
+                  />
+
+                  {qrFile && (
+                    <p className="mt-2 text-sm text-green-700 font-semibold">
+                      Selected: {qrFile.name}
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-4 rounded-xl disabled:opacity-50"
+                >
+                  {loading ? "Submitting..." : "Submit Payment Request"}
+                </button>
+
+                {successMessage && (
+                  <div className="bg-green-100 text-green-700 rounded-xl p-4 font-semibold">
+                    {successMessage}
+                  </div>
+                )}
+              </form>
+            </div>
+          </div>
+        )}
+
+        {view === "operator" && !operatorUnlocked && (
+          <div className="bg-white rounded-3xl p-8 shadow-sm max-w-md mx-auto">
+            <h2 className="text-3xl font-bold mb-2">Operator Login</h2>
+            <p className="text-gray-500 mb-6">
+              Enter operator PIN to access dashboard.
             </p>
 
-            <div style={trustGrid}>
-              <div style={trustBox}>No Thai bank needed</div>
-              <div style={trustBox}>QR / invoice upload</div>
-              <div style={trustBox}>Receipt tracking</div>
-            </div>
-          </section>
-
-          <section style={formCard}>
-            <h2 style={dashboardTitle}>Submit Payment Request</h2>
-            <p style={subtitle}>Use this when a Thai QR payment is required.</p>
-
-            <form onSubmit={submitPaymentRequest}>
-              <input name="customer_name" placeholder="Your name" value={form.customer_name} onChange={handleChange} required style={inputStyle} />
-              <input name="customer_email" type="email" placeholder="Email" value={form.customer_email} onChange={handleChange} required style={inputStyle} />
-              <input name="customer_phone" placeholder="Phone / WhatsApp" value={form.customer_phone} onChange={handleChange} style={inputStyle} />
-              <input name="amount_thb" type="number" placeholder="Amount in THB" value={form.amount_thb} onChange={handleChange} required style={inputStyle} />
-
-              <select name="payment_method" value={form.payment_method} onChange={handleChange} style={inputStyle}>
-                <option value="Card">Card</option>
-                <option value="Crypto">Crypto</option>
-              </select>
-
-              <textarea
-                name="invoice_note"
-                placeholder="Condo name, room number, invoice note, or payment details"
-                value={form.invoice_note}
-                onChange={handleChange}
-                rows="4"
-                style={{ ...inputStyle, resize: "vertical" }}
+            <form onSubmit={loginOperator} className="space-y-4">
+              <input
+                type="password"
+                value={operatorPinInput}
+                onChange={(e) => setOperatorPinInput(e.target.value)}
+                placeholder="Operator PIN"
+                autoComplete="current-password"
+                className="w-full border rounded-xl p-4"
               />
 
-              <label style={labelStyle}>Upload Thai QR / invoice screenshot</label>
-              <input type="file" accept="image/*,.pdf" onChange={(e) => setQrFile(e.target.files[0])} style={inputStyle} />
-
-              <button type="submit" disabled={loading} style={mainButton}>
-                {loading ? "Submitting..." : "Submit Payment Request"}
+              <button className="w-full bg-sky-500 text-white font-bold py-4 rounded-xl">
+                Unlock Operator Dashboard
               </button>
-            </form>
 
-            {message && <div style={messageStyle}>{message}</div>}
-          </section>
-        </main>
-      ) : (
-        <main style={operatorWrap}>
-          <section style={dashboardCard}>
-            <div style={rowBetween}>
+              {operatorError && (
+                <div className="bg-red-100 text-red-700 rounded-xl p-4 font-semibold">
+                  {operatorError}
+                </div>
+              )}
+            </form>
+          </div>
+        )}
+
+        {view === "operator" && operatorUnlocked && (
+          <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
               <div>
-                <h2 style={dashboardTitle}>Operator Dashboard</h2>
-                <p style={subtitle}>Live payment requests from Supabase.</p>
+                <h2 className="text-3xl md:text-4xl font-bold">
+                  Operator Dashboard
+                </h2>
+
+                <p className="text-gray-500">
+                  Live payment requests from Supabase.
+                </p>
               </div>
-              <span style={liveBadge}>LIVE</span>
+
+              <div className="bg-green-500 text-white px-4 py-2 rounded-full font-bold w-fit">
+                LIVE
+              </div>
             </div>
 
-            <div style={statsGrid}>
-              <button onClick={() => setStatusFilter("all")} style={statBox}>All<br /><b>{counts.all}</b></button>
-              <button onClick={() => setStatusFilter("pending")} style={statBox}>Pending<br /><b>{counts.pending}</b></button>
-              <button onClick={() => setStatusFilter("processing")} style={statBox}>Processing<br /><b>{counts.processing}</b></button>
-              <button onClick={() => setStatusFilter("paid")} style={statBox}>Paid<br /><b>{counts.paid}</b></button>
-              <button onClick={() => setStatusFilter("failed")} style={statBox}>Failed<br /><b>{counts.failed}</b></button>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+              <Stat label="All" value={counts.all} />
+              <Stat label="Pending" value={counts.pending} />
+              <Stat label="Processing" value={counts.processing} />
+              <Stat label="Paid" value={counts.paid} />
+              <Stat label="Failed" value={counts.failed} />
             </div>
 
             <input
-              placeholder="Search name, email, phone, or amount"
+              type="text"
+              placeholder="Search name, email, phone, amount, or tracking ID"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={inputStyle}
+              className="w-full border rounded-2xl p-4 mb-6"
             />
 
-            {filteredRequests.map((req) => (
-              <div key={req.id} style={requestCard}>
-                <div style={rowBetween}>
-                  <div>
-                    <h3 style={requestName}>{req.customer_name || "Unnamed"}</h3>
-                    <p style={smallText}>{req.customer_email}</p>
-                    <p style={smallText}>{req.customer_phone}</p>
-                    <p style={timeText}>Submitted: {formatTime(req.created_at)}</p>
+            <div className="space-y-6">
+              {filteredRequests.map((request) => {
+                const isPaid = request.status === "paid"
+                const isFailed = request.status === "failed"
+                const isLocked = isPaid || isFailed
+                const hasReceipt = !!request.receipt_url
+
+                return (
+                  <div
+                    key={request.id}
+                    className="border rounded-3xl p-5 md:p-6"
+                  >
+                    <div className="flex justify-between items-start gap-4">
+                      <div>
+                        <p className="text-xl md:text-2xl font-bold">
+                          {request.customer_name}
+                        </p>
+
+                        <p className="text-gray-600">
+                          {request.customer_email}
+                        </p>
+
+                        <p className="text-gray-600">
+                          {request.customer_phone}
+                        </p>
+
+                        <p className="mt-3 text-xl font-bold">
+                          ฿{request.amount_thb} — {request.payment_method}
+                        </p>
+
+                        <p className="mt-2">
+                          <span className="font-bold">Tracking ID:</span>{" "}
+                          {request.tracking_id || "Not assigned"}
+                        </p>
+
+                        <p className="text-gray-500 mt-2">
+                          Submitted:{" "}
+                          {request.created_at
+                            ? new Date(request.created_at).toLocaleString()
+                            : "No timestamp"}
+                        </p>
+
+                        {request.paid_at && (
+                          <p className="text-green-600 mt-1 font-semibold">
+                            Paid: {new Date(request.paid_at).toLocaleString()}
+                          </p>
+                        )}
+
+                        {request.email_sent_at && (
+                          <p className="text-blue-600 mt-1 font-semibold">
+                            Email sent:{" "}
+                            {new Date(request.email_sent_at).toLocaleString()}
+                          </p>
+                        )}
+
+                        <p className="mt-4">{request.invoice_note}</p>
+                      </div>
+
+                      <StatusBadge status={request.status} />
+                    </div>
+
+                    <div className="flex gap-3 mt-6 flex-wrap">
+                      {request.qr_image_url && (
+                        <button
+                          onClick={() =>
+                            setPreview({
+                              title: "QR / Invoice",
+                              url: request.qr_image_url,
+                            })
+                          }
+                          className="bg-sky-500 hover:bg-sky-600 text-white px-5 py-3 rounded-xl font-bold"
+                        >
+                          View QR / Invoice
+                        </button>
+                      )}
+
+                      {hasReceipt && (
+                        <button
+                          onClick={() =>
+                            setPreview({
+                              title: "Receipt",
+                              url: request.receipt_url,
+                            })
+                          }
+                          className="bg-green-500 text-white px-5 py-3 rounded-xl font-bold"
+                        >
+                          Receipt Uploaded
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-6">
+                      <p className="font-semibold mb-2">Upload receipt</p>
+
+                      {hasReceipt ? (
+                        <div className="bg-gray-100 rounded-xl p-4 text-gray-600 font-semibold">
+                          Receipt locked ✓
+                        </div>
+                      ) : (
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          disabled={isLocked}
+                          onChange={(e) =>
+                            uploadReceipt(request, e.target.files[0])
+                          }
+                          className="w-full border rounded-xl p-4 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex gap-3 mt-6 flex-wrap">
+                      <button
+                        disabled={isLocked || request.status === "processing"}
+                        onClick={() => updateStatus(request, "processing")}
+                        className={`px-5 py-3 rounded-xl font-bold text-white ${
+                          isLocked || request.status === "processing"
+                            ? "bg-gray-300 cursor-not-allowed"
+                            : "bg-sky-500 hover:bg-sky-600"
+                        }`}
+                      >
+                        {request.status === "processing"
+                          ? "✓ Processing"
+                          : "Processing"}
+                      </button>
+
+                      <button
+                        disabled={isLocked || !hasReceipt}
+                        onClick={() => updateStatus(request, "paid")}
+                        className={`px-5 py-3 rounded-xl font-bold text-white ${
+                          isLocked || !hasReceipt
+                            ? "bg-gray-300 cursor-not-allowed"
+                            : "bg-green-500 hover:bg-green-600"
+                        }`}
+                      >
+                        {isPaid ? "✓ Paid" : "Paid"}
+                      </button>
+
+                      <button
+                        disabled={isLocked}
+                        onClick={() => updateStatus(request, "failed")}
+                        className={`px-5 py-3 rounded-xl font-bold text-white ${
+                          isLocked
+                            ? "bg-gray-300 cursor-not-allowed"
+                            : "bg-red-500 hover:bg-red-600"
+                        }`}
+                      >
+                        {isFailed ? "✓ Failed" : "Failed"}
+                      </button>
+                    </div>
                   </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
-                  <span style={{ ...statusBadge, background: statusColor(req.status) }}>
-                    {req.status}
-                  </span>
-                </div>
+      {preview && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 md:p-6"
+          onClick={() => setPreview(null)}
+        >
+          <div
+            className="bg-white rounded-3xl p-5 max-w-4xl w-full max-h-[90vh] overflow-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold">{preview.title}</h2>
 
-                <div style={amountLine}>฿{req.amount_thb} — {req.payment_method}</div>
-                <p style={noteText}>{req.invoice_note}</p>
-
-                <div style={fileRow}>
-                  {req.qr_image_url ? (
-                    <button onClick={() => openViewer(req.qr_image_url, "QR / Invoice")} style={fileButton}>
-                      View QR / Invoice
-                    </button>
-                  ) : (
-                    <span style={missingFile}>No QR uploaded</span>
-                  )}
-
-                  {req.receipt_url ? (
-                    <button onClick={() => openViewer(req.receipt_url, "Receipt")} style={successFileButton}>
-                      Receipt Uploaded
-                    </button>
-                  ) : (
-                    <span style={missingFile}>No receipt yet</span>
-                  )}
-                </div>
-
-                <label style={labelStyle}>Upload receipt</label>
-                <input type="file" accept="image/*,.pdf" onChange={(e) => uploadReceipt(req.id, e.target.files[0])} style={inputStyle} />
-
-                <StatusButton req={req} status="processing">Processing</StatusButton>
-                <StatusButton req={req} status="paid">Paid</StatusButton>
-                <StatusButton req={req} status="failed" danger>Failed</StatusButton>
-              </div>
-            ))}
-          </section>
-        </main>
-      )}
-
-      {viewerUrl && (
-        <div style={modalOverlay} onClick={closeViewer}>
-          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <div style={rowBetween}>
-              <h2 style={dashboardTitle}>{viewerTitle}</h2>
-              <button onClick={closeViewer} style={closeButton}>Close</button>
+              <button
+                onClick={() => setPreview(null)}
+                className="bg-red-500 text-white px-4 py-2 rounded-xl font-bold"
+              >
+                Close
+              </button>
             </div>
 
-            {viewerUrl.toLowerCase().includes(".pdf") ? (
-              <iframe src={viewerUrl} title={viewerTitle} style={iframeStyle} />
+            {preview.url?.toLowerCase().includes(".pdf") ? (
+              <iframe
+                src={preview.url}
+                title={preview.title}
+                className="w-full h-[75vh] rounded-2xl border"
+              />
             ) : (
-              <img src={viewerUrl} alt={viewerTitle} style={imagePreview} />
+              <img
+                src={preview.url}
+                alt={preview.title}
+                className="w-full max-h-[75vh] object-contain rounded-2xl"
+              />
             )}
           </div>
         </div>
       )}
     </div>
-  );
+  )
 }
 
-const pageStyle = { minHeight: "100vh", background: "linear-gradient(135deg, #eef8ff, #f8fafc)", fontFamily: "Arial, sans-serif", padding: "24px" };
-const topBar = { maxWidth: "1180px", margin: "0 auto 24px", background: "white", borderRadius: "18px", padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "0 12px 35px rgba(15, 23, 42, 0.08)" };
-const miniText = { color: "#64748b", fontWeight: 700 };
-const modeSwitch = { display: "flex", gap: "8px" };
-const modeButton = { padding: "10px 14px", borderRadius: "12px", border: "1px solid #cbd5e1", background: "#f8fafc", cursor: "pointer", fontWeight: 800 };
-const activeModeButton = { ...modeButton, background: "#0ea5e9", color: "white", border: "1px solid #0ea5e9" };
-const customerWrap = { maxWidth: "1180px", margin: "0 auto", display: "grid", gridTemplateColumns: "1.2fr 420px", gap: "28px" };
-const operatorWrap = { maxWidth: "1180px", margin: "0 auto" };
-const heroCard = { background: "white", padding: "42px", borderRadius: "28px", boxShadow: "0 18px 50px rgba(15, 23, 42, 0.10)" };
-const heroTitle = { fontSize: "52px", lineHeight: "1.02", color: "#0f172a", margin: "18px 0" };
-const heroSubtitle = { color: "#475569", fontSize: "18px", lineHeight: "1.6", maxWidth: "720px" };
-const trustGrid = { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "14px", marginTop: "28px" };
-const trustBox = { background: "#f1f5f9", padding: "18px", borderRadius: "18px", color: "#0f172a", fontWeight: 900 };
-const formCard = { background: "white", padding: "32px", borderRadius: "24px", boxShadow: "0 18px 50px rgba(15, 23, 42, 0.12)", height: "fit-content" };
-const dashboardCard = { background: "white", padding: "32px", borderRadius: "24px", boxShadow: "0 18px 50px rgba(15, 23, 42, 0.12)" };
-const logoBox = { width: "48px", height: "48px", borderRadius: "16px", background: "#0ea5e9", color: "white", fontWeight: "800", display: "flex", alignItems: "center", justifyContent: "center" };
-const dashboardTitle = { margin: 0, fontSize: "26px", color: "#0f172a" };
-const subtitle = { color: "#64748b", marginBottom: "24px" };
-const inputStyle = { width: "100%", padding: "14px", marginBottom: "14px", borderRadius: "14px", border: "1px solid #cbd5e1", fontSize: "15px", boxSizing: "border-box" };
-const labelStyle = { display: "block", fontSize: "13px", fontWeight: "700", color: "#334155", marginBottom: "8px" };
-const mainButton = { width: "100%", padding: "15px", borderRadius: "14px", border: "none", background: "#0ea5e9", color: "white", fontSize: "16px", fontWeight: "800", cursor: "pointer" };
-const messageStyle = { marginTop: "18px", padding: "14px", borderRadius: "14px", background: "#f1f5f9", color: "#0f172a", fontWeight: "700" };
-const requestCard = { border: "1px solid #e2e8f0", borderRadius: "18px", padding: "18px", marginTop: "16px", background: "#ffffff" };
-const rowBetween = { display: "flex", justifyContent: "space-between", gap: "16px" };
-const requestName = { margin: 0, color: "#0f172a" };
-const smallText = { margin: "4px 0", color: "#475569" };
-const timeText = { margin: "8px 0 0", color: "#94a3b8", fontSize: "13px" };
-const amountLine = { marginTop: "12px", fontSize: "18px", fontWeight: "800", color: "#0f172a" };
-const noteText = { color: "#334155" };
-const statusBadge = { color: "white", padding: "8px 12px", borderRadius: "999px", fontSize: "13px", fontWeight: "800", height: "fit-content", textTransform: "capitalize" };
-const smallButton = { marginRight: "8px", marginTop: "8px", padding: "10px 13px", borderRadius: "12px", border: "none", background: "#0ea5e9", color: "white", fontWeight: "800", cursor: "pointer" };
-const fileRow = { display: "flex", gap: "10px", flexWrap: "wrap", margin: "14px 0" };
-const fileButton = { padding: "10px 13px", borderRadius: "12px", border: "none", background: "#0284c7", color: "white", fontWeight: "800", cursor: "pointer" };
-const successFileButton = { ...fileButton, background: "#16a34a" };
-const missingFile = { padding: "10px 13px", borderRadius: "12px", background: "#f1f5f9", color: "#64748b", fontWeight: "700" };
-const statsGrid = { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "10px", marginBottom: "18px" };
-const statBox = { padding: "12px", borderRadius: "14px", border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", fontWeight: "700" };
-const liveBadge = { height: "fit-content", padding: "8px 12px", borderRadius: "999px", background: "#16a34a", color: "white", fontWeight: "900", fontSize: "12px" };
-const modalOverlay = { position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.65)", display: "flex", justifyContent: "center", alignItems: "center", padding: "30px", zIndex: 999 };
-const modalCard = { width: "min(850px, 95vw)", maxHeight: "90vh", overflow: "auto", background: "white", borderRadius: "24px", padding: "24px" };
-const closeButton = { padding: "10px 14px", borderRadius: "12px", border: "none", background: "#ef4444", color: "white", fontWeight: "800", cursor: "pointer" };
-const imagePreview = { width: "100%", maxHeight: "75vh", objectFit: "contain", borderRadius: "16px", marginTop: "18px" };
-const iframeStyle = { width: "100%", height: "75vh", border: "none", borderRadius: "16px", marginTop: "18px" };
+function Stat({ label, value }) {
+  return (
+    <div className="bg-gray-100 rounded-2xl p-4 text-center">
+      <p className="text-sm">{label}</p>
+      <p className="text-3xl font-bold">{value}</p>
+    </div>
+  )
+}
+
+function StatusBadge({ status }) {
+  return (
+    <div
+      className={`px-4 py-2 rounded-full text-white font-bold capitalize whitespace-nowrap ${
+        status === "pending"
+          ? "bg-blue-500"
+          : status === "processing"
+          ? "bg-orange-500"
+          : status === "paid"
+          ? "bg-green-500"
+          : "bg-red-500"
+      }`}
+    >
+      {status}
+    </div>
+  )
+}
