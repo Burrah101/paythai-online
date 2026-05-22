@@ -497,7 +497,10 @@ export default function App() {
                   Enter your tracking ID to check live payment status.
                 </p>
 
-                <form onSubmit={lookupTracking} className="flex flex-col sm:flex-row gap-3">
+                <form
+                  onSubmit={lookupTracking}
+                  className="flex flex-col sm:flex-row gap-3"
+                >
                   <input
                     value={trackingSearch}
                     onChange={(e) => setTrackingSearch(e.target.value)}
@@ -509,6 +512,16 @@ export default function App() {
                     Check Status
                   </button>
                 </form>
+
+                {trackingResult && (
+                  <button
+                    type="button"
+                    onClick={lookupTracking}
+                    className="w-full mt-3 bg-gray-900 text-white font-bold px-5 py-4 rounded-xl"
+                  >
+                    Refresh Tracking
+                  </button>
+                )}
 
                 {trackingMessage && (
                   <div className="mt-4 bg-yellow-100 text-yellow-800 rounded-xl p-4 font-semibold">
@@ -606,7 +619,9 @@ export default function App() {
                           Amount in THB
                         </label>
                         <div className="flex items-center border rounded-xl overflow-hidden">
-                          <span className="bg-gray-100 px-4 py-4 font-bold">฿</span>
+                          <span className="bg-gray-100 px-4 py-4 font-bold">
+                            ฿
+                          </span>
                           <input
                             type="number"
                             step="0.01"
@@ -636,7 +651,10 @@ export default function App() {
                           <ReasonButton
                             active={formData.reason_type === "condo"}
                             onClick={() =>
-                              setFormData({ ...formData, reason_type: "condo" })
+                              setFormData({
+                                ...formData,
+                                reason_type: "condo",
+                              })
                             }
                             title="🏢 Condo / Rent / Utility"
                           />
@@ -653,7 +671,10 @@ export default function App() {
                           <ReasonButton
                             active={formData.reason_type === "service"}
                             onClick={() =>
-                              setFormData({ ...formData, reason_type: "service" })
+                              setFormData({
+                                ...formData,
+                                reason_type: "service",
+                              })
                             }
                             title="📦 Other QR Payment / Service"
                           />
@@ -780,7 +801,10 @@ export default function App() {
                           className="border rounded-xl p-4"
                         >
                           {COUNTRY_CODES.map((country) => (
-                            <option key={`${country.name}-${country.code}`} value={country.code}>
+                            <option
+                              key={`${country.name}-${country.code}`}
+                              value={country.code}
+                            >
                               {country.name} {country.code}
                             </option>
                           ))}
@@ -879,7 +903,7 @@ export default function App() {
                     <StepTitle
                       number="✓"
                       title="Request Sent"
-                      description="Your live tracking is ready below."
+                      description="Your live tracking is ready above."
                     />
 
                     {successMessage && (
@@ -887,14 +911,6 @@ export default function App() {
                         {successMessage}
                       </div>
                     )}
-
-                    <button
-                      type="button"
-                      onClick={lookupTracking}
-                      className="w-full mt-4 bg-sky-500 text-white font-bold py-4 rounded-xl"
-                    >
-                      Refresh Tracking
-                    </button>
 
                     <button
                       type="button"
@@ -1270,8 +1286,8 @@ function TrackingCard({ trackingResult, setPreview }) {
 
       {trackingResult.status !== "paid" && (
         <p className="mt-4 text-gray-500">
-          Your request is live. This screen updates as the operator marks it
-          processing or paid.
+          Your request is live. Use Refresh Tracking above to check the latest
+          status.
         </p>
       )}
     </div>
