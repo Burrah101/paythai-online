@@ -24,7 +24,9 @@ export default function App() {
     return localStorage.getItem("paythai_view") || "customer"
   })
 
-  const [customerStep, setCustomerStep] = useState(1)
+  const [customerStep, setCustomerStep] = useState(() => {
+    return localStorage.getItem("paythai_tracking") ? 5 : 1
+  })
 
   const [operatorUnlocked, setOperatorUnlocked] = useState(() => {
     return localStorage.getItem("paythai_operator_unlocked") === "yes"
@@ -38,7 +40,9 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState(null)
 
-  const [trackingSearch, setTrackingSearch] = useState("")
+  const [trackingSearch, setTrackingSearch] = useState(() => {
+    return localStorage.getItem("paythai_tracking") || ""
+  })
   const [trackingResult, setTrackingResult] = useState(null)
   const [trackingMessage, setTrackingMessage] = useState("")
 
@@ -77,16 +81,6 @@ export default function App() {
     }
 
     setRequests(data || [])
-
-    if (trackingSearch.trim()) {
-      const found = (data || []).find(
-        (r) =>
-          r.tracking_id?.toUpperCase() ===
-          trackingSearch.trim().toUpperCase()
-      )
-
-      if (found) setTrackingResult(found)
-    }
   }
 
   useEffect(() => {
@@ -96,12 +90,66 @@ export default function App() {
       .channel("payment-live")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "payment_requests" },
-        () => fetchRequests()
+        {
+          event: "*",
+          schema: "public",
+          table: "payment_requests",
+        },
+        () => {
+          fetchRequests()
+        }
       )
       .subscribe()
 
-    return () => supabase.removeChannel(channel)
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
+  useEffect(() => {
+    const activeTracking = trackingSearch.trim().toUpperCase()
+
+    if (!activeTracking) return
+
+    async function loadTracking() {
+      const { data } = await supabase
+        .from("payment_requests")
+        .select("*")
+        .eq("tracking_id", activeTracking)
+        .maybeSingle()
+
+      if (data) {
+        setTrackingResult(data)
+        setCustomerStep(5)
+      }
+    }
+
+    loadTracking()
+
+    const trackingChannel = supabase
+      .channel(`customer-live-tracking-${activeTracking}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "payment_requests",
+        },
+        (payload) => {
+          if (
+            payload.new?.tracking_id?.toUpperCase() ===
+            activeTracking.toUpperCase()
+          ) {
+            setTrackingResult(payload.new)
+            setCustomerStep(5)
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(trackingChannel)
+    }
   }, [trackingSearch])
 
   async function uploadQrImage(file) {
@@ -145,7 +193,7 @@ export default function App() {
 
     if (formData.reason_type === "service") {
       lines.push("Reason: Other QR Payment / Service")
-      lines.push(`Service / Business Name: ${formData.service_name}`)
+      lines.push(`Services: ${formData.service_name}`)
     }
 
     if (formData.invoice_note.trim()) {
@@ -163,7 +211,9 @@ export default function App() {
     try {
       let qrUrl = null
 
-      if (qrFile) qrUrl = await uploadQrImage(qrFile)
+      if (qrFile) {
+        qrUrl = await uploadQrImage(qrFile)
+      }
 
       const trackingId =
         "PT-" + Math.floor(100000 + Math.random() * 900000)
@@ -188,8 +238,10 @@ export default function App() {
         return
       }
 
-      setSuccessMessage(`✅ Request submitted. Tracking ID: ${trackingId}`)
+      localStorage.setItem("paythai_tracking", trackingId)
       setTrackingSearch(trackingId)
+
+      setSuccessMessage(`✅ Request submitted. Tracking ID: ${trackingId}`)
       setCustomerStep(5)
 
       setFormData({
@@ -258,10 +310,12 @@ export default function App() {
       .from("payment-files")
       .getPublicUrl(fileName)
 
+    const publicUrl = data.publicUrl
+
     const { error: updateError } = await supabase
       .from("payment_requests")
       .update({
-        receipt_url: data.publicUrl,
+        receipt_url: publicUrl,
         status: request.status === "pending" ? "processing" : request.status,
       })
       .eq("id", request.id)
@@ -276,7 +330,8 @@ export default function App() {
   }
 
   async function lookupTracking(e) {
-    e.preventDefault()
+    if (e) e.preventDefault()
+
     setTrackingResult(null)
     setTrackingMessage("")
 
@@ -286,6 +341,8 @@ export default function App() {
       setTrackingMessage("Enter your tracking ID.")
       return
     }
+
+    localStorage.setItem("paythai_tracking", cleaned)
 
     const { data, error } = await supabase
       .from("payment_requests")
@@ -305,6 +362,7 @@ export default function App() {
     }
 
     setTrackingResult(data)
+    setCustomerStep(5)
   }
 
   function loginOperator(e) {
@@ -366,7 +424,8 @@ export default function App() {
         <div className="bg-white rounded-2xl shadow-sm p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">
-              PayThai <span className="text-sm text-gray-400">paythai.online</span>
+              PayThai{" "}
+              <span className="text-sm text-gray-400">paythai.online</span>
             </h1>
           </div>
 
@@ -374,7 +433,9 @@ export default function App() {
             <button
               onClick={() => setView("customer")}
               className={`px-4 py-2 rounded-xl font-semibold ${
-                view === "customer" ? "bg-sky-500 text-white" : "bg-gray-100"
+                view === "customer"
+                  ? "bg-sky-500 text-white"
+                  : "bg-gray-100"
               }`}
             >
               Customer
@@ -383,7 +444,9 @@ export default function App() {
             <button
               onClick={() => setView("operator")}
               className={`px-4 py-2 rounded-xl font-semibold ${
-                view === "operator" ? "bg-sky-500 text-white" : "bg-gray-100"
+                view === "operator"
+                  ? "bg-sky-500 text-white"
+                  : "bg-gray-100"
               }`}
             >
               Operator
@@ -836,6 +899,9 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => {
+                        localStorage.removeItem("paythai_tracking")
+                        setTrackingSearch("")
+                        setTrackingResult(null)
                         setCustomerStep(1)
                         setSuccessMessage("")
                       }}
