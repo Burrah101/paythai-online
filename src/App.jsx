@@ -3,10 +3,28 @@ import { supabase } from "./lib/supabase"
 
 const OPERATOR_PIN = import.meta.env.VITE_OPERATOR_PIN || "2400"
 
+const COUNTRY_CODES = [
+  { name: "Thailand", code: "+66" },
+  { name: "United States", code: "+1" },
+  { name: "Canada", code: "+1" },
+  { name: "United Kingdom", code: "+44" },
+  { name: "India", code: "+91" },
+  { name: "Australia", code: "+61" },
+  { name: "Germany", code: "+49" },
+  { name: "France", code: "+33" },
+  { name: "China", code: "+86" },
+  { name: "Japan", code: "+81" },
+  { name: "South Korea", code: "+82" },
+  { name: "Russia", code: "+7" },
+  { name: "UAE", code: "+971" },
+]
+
 export default function App() {
   const [view, setView] = useState(() => {
     return localStorage.getItem("paythai_view") || "customer"
   })
+
+  const [customerStep, setCustomerStep] = useState(1)
 
   const [operatorUnlocked, setOperatorUnlocked] = useState(() => {
     return localStorage.getItem("paythai_operator_unlocked") === "yes"
@@ -27,9 +45,16 @@ export default function App() {
   const [formData, setFormData] = useState({
     customer_name: "",
     customer_email: "",
+    country_code: "+66",
     customer_phone: "",
     amount_thb: "",
     payment_method: "Card",
+    reason_type: "condo",
+    condo_name: "",
+    condo_unit: "",
+    agency_name: "",
+    reference_number: "",
+    service_name: "",
     invoice_note: "",
   })
 
@@ -52,6 +77,16 @@ export default function App() {
     }
 
     setRequests(data || [])
+
+    if (trackingSearch.trim()) {
+      const found = (data || []).find(
+        (r) =>
+          r.tracking_id?.toUpperCase() ===
+          trackingSearch.trim().toUpperCase()
+      )
+
+      if (found) setTrackingResult(found)
+    }
   }
 
   useEffect(() => {
@@ -61,21 +96,13 @@ export default function App() {
       .channel("payment-live")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "payment_requests",
-        },
-        () => {
-          fetchRequests()
-        }
+        { event: "*", schema: "public", table: "payment_requests" },
+        () => fetchRequests()
       )
       .subscribe()
 
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [])
+    return () => supabase.removeChannel(channel)
+  }, [trackingSearch])
 
   async function uploadQrImage(file) {
     if (!file) return null
@@ -101,6 +128,33 @@ export default function App() {
     return data.publicUrl
   }
 
+  function buildInvoiceNote() {
+    const lines = []
+
+    if (formData.reason_type === "condo") {
+      lines.push("Reason: Condo / Rent / Utility")
+      lines.push(`Condo / Building: ${formData.condo_name}`)
+      lines.push(`Room / Unit: ${formData.condo_unit}`)
+    }
+
+    if (formData.reason_type === "government") {
+      lines.push("Reason: Fine / Ticket / Government")
+      lines.push(`Agency / Office: ${formData.agency_name}`)
+      lines.push(`Reference Number: ${formData.reference_number}`)
+    }
+
+    if (formData.reason_type === "service") {
+      lines.push("Reason: Other QR Payment / Service")
+      lines.push(`Service / Business Name: ${formData.service_name}`)
+    }
+
+    if (formData.invoice_note.trim()) {
+      lines.push(`Optional Note: ${formData.invoice_note.trim()}`)
+    }
+
+    return lines.join("\n")
+  }
+
   async function submitRequest(e) {
     e.preventDefault()
     setLoading(true)
@@ -109,16 +163,19 @@ export default function App() {
     try {
       let qrUrl = null
 
-      if (qrFile) {
-        qrUrl = await uploadQrImage(qrFile)
-      }
+      if (qrFile) qrUrl = await uploadQrImage(qrFile)
 
       const trackingId =
         "PT-" + Math.floor(100000 + Math.random() * 900000)
 
       const { error } = await supabase.from("payment_requests").insert([
         {
-          ...formData,
+          customer_name: formData.customer_name,
+          customer_email: formData.customer_email,
+          customer_phone: `${formData.country_code} ${formData.customer_phone}`,
+          amount_thb: Number(formData.amount_thb),
+          payment_method: formData.payment_method,
+          invoice_note: buildInvoiceNote(),
           qr_image_url: qrUrl,
           status: "pending",
           tracking_id: trackingId,
@@ -131,18 +188,23 @@ export default function App() {
         return
       }
 
-      setSuccessMessage(
-        `✅ Payment request submitted successfully. Tracking ID: ${trackingId}`
-      )
-
+      setSuccessMessage(`✅ Request submitted. Tracking ID: ${trackingId}`)
       setTrackingSearch(trackingId)
+      setCustomerStep(5)
 
       setFormData({
         customer_name: "",
         customer_email: "",
+        country_code: "+66",
         customer_phone: "",
         amount_thb: "",
         payment_method: "Card",
+        reason_type: "condo",
+        condo_name: "",
+        condo_unit: "",
+        agency_name: "",
+        reference_number: "",
+        service_name: "",
         invoice_note: "",
       })
 
@@ -159,9 +221,7 @@ export default function App() {
   async function updateStatus(request, status) {
     const updatePayload = { status }
 
-    if (status === "paid") {
-      updatePayload.paid_at = new Date().toISOString()
-    }
+    if (status === "paid") updatePayload.paid_at = new Date().toISOString()
 
     const { error } = await supabase
       .from("payment_requests")
@@ -173,13 +233,6 @@ export default function App() {
       alert("Status update failed")
       return
     }
-
-    /*
-      FINAL EMAIL HOOK:
-      Later we connect Supabase Edge Function here.
-      When status === "paid", send one final email with receipt link.
-      After email succeeds, update email_sent_at.
-    */
 
     fetchRequests()
   }
@@ -205,12 +258,10 @@ export default function App() {
       .from("payment-files")
       .getPublicUrl(fileName)
 
-    const publicUrl = data.publicUrl
-
     const { error: updateError } = await supabase
       .from("payment_requests")
       .update({
-        receipt_url: publicUrl,
+        receipt_url: data.publicUrl,
         status: request.status === "pending" ? "processing" : request.status,
       })
       .eq("id", request.id)
@@ -275,6 +326,16 @@ export default function App() {
     setView("customer")
   }
 
+  function formatAmountOnBlur() {
+    if (!formData.amount_thb) return
+    const value = Number(formData.amount_thb)
+    if (Number.isNaN(value) || value <= 0) {
+      setFormData({ ...formData, amount_thb: "" })
+      return
+    }
+    setFormData({ ...formData, amount_thb: value.toFixed(2) })
+  }
+
   const filteredRequests = useMemo(() => {
     return requests.filter((r) => {
       const value = `
@@ -305,8 +366,7 @@ export default function App() {
         <div className="bg-white rounded-2xl shadow-sm p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold">
-              PayThai{" "}
-              <span className="text-sm text-gray-400">paythai.online</span>
+              PayThai <span className="text-sm text-gray-400">paythai.online</span>
             </h1>
           </div>
 
@@ -314,9 +374,7 @@ export default function App() {
             <button
               onClick={() => setView("customer")}
               className={`px-4 py-2 rounded-xl font-semibold ${
-                view === "customer"
-                  ? "bg-sky-500 text-white"
-                  : "bg-gray-100"
+                view === "customer" ? "bg-sky-500 text-white" : "bg-gray-100"
               }`}
             >
               Customer
@@ -325,9 +383,7 @@ export default function App() {
             <button
               onClick={() => setView("operator")}
               className={`px-4 py-2 rounded-xl font-semibold ${
-                view === "operator"
-                  ? "bg-sky-500 text-white"
-                  : "bg-gray-100"
+                view === "operator" ? "bg-sky-500 text-white" : "bg-gray-100"
               }`}
             >
               Operator
@@ -364,11 +420,9 @@ export default function App() {
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
                   No Thai bank needed
                 </div>
-
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
                   QR / invoice upload
                 </div>
-
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
                   Receipt tracking
                 </div>
@@ -377,13 +431,10 @@ export default function App() {
               <div className="mt-8 bg-slate-50 rounded-3xl p-5">
                 <h3 className="text-2xl font-bold mb-2">Track Payment</h3>
                 <p className="text-gray-500 mb-4">
-                  Enter your tracking ID to check payment status and receipt.
+                  Enter your tracking ID to check live payment status.
                 </p>
 
-                <form
-                  onSubmit={lookupTracking}
-                  className="flex flex-col sm:flex-row gap-3"
-                >
+                <form onSubmit={lookupTracking} className="flex flex-col sm:flex-row gap-3">
                   <input
                     value={trackingSearch}
                     onChange={(e) => setTrackingSearch(e.target.value)}
@@ -403,166 +454,395 @@ export default function App() {
                 )}
 
                 {trackingResult && (
-                  <div className="mt-4 bg-white rounded-2xl p-5 border">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-bold text-lg">
-                          Tracking ID: {trackingResult.tracking_id}
-                        </p>
-                        <p className="text-gray-600">
-                          Amount: ฿{trackingResult.amount_thb}
-                        </p>
-                        <p className="text-gray-600">
-                          Method: {trackingResult.payment_method}
-                        </p>
-                      </div>
-
-                      <span
-                        className={`px-4 py-2 rounded-full text-white font-bold capitalize ${
-                          trackingResult.status === "paid"
-                            ? "bg-green-500"
-                            : trackingResult.status === "processing"
-                            ? "bg-orange-500"
-                            : trackingResult.status === "failed"
-                            ? "bg-red-500"
-                            : "bg-blue-500"
-                        }`}
-                      >
-                        {trackingResult.status}
-                      </span>
-                    </div>
-
-                    {trackingResult.status === "paid" &&
-                      trackingResult.receipt_url && (
-                        <button
-                          onClick={() =>
-                            setPreview({
-                              title: "Payment Receipt",
-                              url: trackingResult.receipt_url,
-                            })
-                          }
-                          className="mt-4 bg-green-500 text-white px-5 py-3 rounded-xl font-bold"
-                        >
-                          View Receipt
-                        </button>
-                      )}
-
-                    {trackingResult.status !== "paid" && (
-                      <p className="mt-4 text-gray-500">
-                        Your request is still being handled. Final confirmation
-                        will be sent after payment is completed.
-                      </p>
-                    )}
-                  </div>
+                  <TrackingCard
+                    trackingResult={trackingResult}
+                    setPreview={setPreview}
+                  />
                 )}
               </div>
             </div>
 
             <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm">
-              <h2 className="text-3xl font-bold mb-2">
-                Submit Payment Request
-              </h2>
+              <h2 className="text-3xl font-bold mb-2">Submit Payment Request</h2>
 
               <p className="text-gray-500 mb-6">
-                Use this when a Thai QR payment is required.
+                Four simple steps. Upload the Thai QR first.
               </p>
 
-              <form onSubmit={submitRequest} className="space-y-4">
-                <input
-                  type="text"
-                  placeholder="Your name"
-                  value={formData.customer_name}
-                  onChange={(e) =>
-                    setFormData({ ...formData, customer_name: e.target.value })
-                  }
-                  className="w-full border rounded-xl p-4"
-                  required
-                />
+              <StepProgress step={customerStep} />
 
-                <input
-                  type="email"
-                  placeholder="Email"
-                  value={formData.customer_email}
-                  onChange={(e) =>
-                    setFormData({ ...formData, customer_email: e.target.value })
-                  }
-                  className="w-full border rounded-xl p-4"
-                  required
-                />
+              <form onSubmit={submitRequest} className="space-y-6 mt-6">
+                {customerStep === 1 && (
+                  <div>
+                    <StepTitle
+                      number="1"
+                      title="Take Photo"
+                      description="Take a photo or upload a Thai QR, invoice, or condo bill."
+                    />
 
-                <input
-                  type="text"
-                  placeholder="Phone / WhatsApp"
-                  value={formData.customer_phone}
-                  onChange={(e) =>
-                    setFormData({ ...formData, customer_phone: e.target.value })
-                  }
-                  className="w-full border rounded-xl p-4"
-                  required
-                />
+                    <label className="block bg-sky-500 hover:bg-sky-600 text-white rounded-3xl p-8 text-center font-bold text-2xl cursor-pointer shadow-sm">
+                      📷 Take Photo / Upload QR
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        capture="environment"
+                        onChange={(e) => {
+                          const file = e.target.files[0]
+                          if (file) {
+                            setQrFile(file)
+                            setCustomerStep(2)
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
 
-                <input
-                  type="number"
-                  placeholder="Amount in THB"
-                  value={formData.amount_thb}
-                  onChange={(e) =>
-                    setFormData({ ...formData, amount_thb: e.target.value })
-                  }
-                  className="w-full border rounded-xl p-4"
-                  required
-                />
+                    {qrFile && (
+                      <div className="mt-4 bg-green-100 text-green-700 rounded-xl p-4 font-semibold">
+                        Selected: {qrFile.name}
+                      </div>
+                    )}
+                  </div>
+                )}
 
-                <select
-                  value={formData.payment_method}
-                  onChange={(e) =>
-                    setFormData({ ...formData, payment_method: e.target.value })
-                  }
-                  className="w-full border rounded-xl p-4"
-                >
-                  <option>Card</option>
-                  <option>Crypto</option>
-                </select>
+                {customerStep === 2 && (
+                  <div>
+                    <StepTitle
+                      number="2"
+                      title="Payment Method"
+                      description="Card is the default simple option for now."
+                    />
 
-                <textarea
-                  placeholder="Condo name, room number, invoice note, or payment details"
-                  value={formData.invoice_note}
-                  onChange={(e) =>
-                    setFormData({ ...formData, invoice_note: e.target.value })
-                  }
-                  className="w-full border rounded-xl p-4 h-32"
-                />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData({ ...formData, payment_method: "Card" })
+                        setCustomerStep(3)
+                      }}
+                      className="w-full border-2 border-sky-500 bg-sky-50 rounded-3xl p-6 text-left"
+                    >
+                      <div className="text-2xl font-bold">💳 Card</div>
+                      <p className="text-gray-600 mt-2">
+                        PayThai will coordinate your card payment securely.
+                      </p>
+                    </button>
+                  </div>
+                )}
 
-                <div>
-                  <p className="font-semibold mb-2 text-sm">
-                    Take photo or upload Thai QR / invoice
-                  </p>
+                {customerStep === 3 && (
+                  <div>
+                    <StepTitle
+                      number="3"
+                      title="Payment Details"
+                      description="Enter the payment amount and only the details needed for this request."
+                    />
 
-                  <input
-                    type="file"
-                    accept="image/*,.pdf"
-                    capture="environment"
-                    onChange={(e) => setQrFile(e.target.files[0])}
-                    className="w-full border rounded-xl p-3"
-                  />
+                    <div className="space-y-4">
+                      <div>
+                        <label className="font-semibold text-sm mb-2 block">
+                          Amount in THB
+                        </label>
+                        <div className="flex items-center border rounded-xl overflow-hidden">
+                          <span className="bg-gray-100 px-4 py-4 font-bold">฿</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            inputMode="decimal"
+                            placeholder="0.00"
+                            value={formData.amount_thb}
+                            onBlur={formatAmountOnBlur}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                amount_thb: e.target.value,
+                              })
+                            }
+                            className="w-full p-4 outline-none"
+                            required
+                          />
+                        </div>
+                      </div>
 
-                  {qrFile && (
-                    <p className="mt-2 text-sm text-green-700 font-semibold">
-                      Selected: {qrFile.name}
-                    </p>
-                  )}
-                </div>
+                      <div>
+                        <label className="font-semibold text-sm mb-2 block">
+                          Reason for payment
+                        </label>
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-4 rounded-xl disabled:opacity-50"
-                >
-                  {loading ? "Submitting..." : "Submit Payment Request"}
-                </button>
+                        <div className="grid gap-3">
+                          <ReasonButton
+                            active={formData.reason_type === "condo"}
+                            onClick={() =>
+                              setFormData({ ...formData, reason_type: "condo" })
+                            }
+                            title="🏢 Condo / Rent / Utility"
+                          />
+                          <ReasonButton
+                            active={formData.reason_type === "government"}
+                            onClick={() =>
+                              setFormData({
+                                ...formData,
+                                reason_type: "government",
+                              })
+                            }
+                            title="🏛 Fine / Ticket / Government"
+                          />
+                          <ReasonButton
+                            active={formData.reason_type === "service"}
+                            onClick={() =>
+                              setFormData({ ...formData, reason_type: "service" })
+                            }
+                            title="📦 Other QR Payment / Service"
+                          />
+                        </div>
+                      </div>
 
-                {successMessage && (
-                  <div className="bg-green-100 text-green-700 rounded-xl p-4 font-semibold">
-                    {successMessage}
+                      {formData.reason_type === "condo" && (
+                        <>
+                          <input
+                            type="text"
+                            placeholder="Condo / Building Name"
+                            value={formData.condo_name}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                condo_name: e.target.value,
+                              })
+                            }
+                            className="w-full border rounded-xl p-4"
+                            required
+                          />
+
+                          <input
+                            type="text"
+                            placeholder="Room / Unit Number"
+                            value={formData.condo_unit}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                condo_unit: e.target.value,
+                              })
+                            }
+                            className="w-full border rounded-xl p-4"
+                            required
+                          />
+                        </>
+                      )}
+
+                      {formData.reason_type === "government" && (
+                        <>
+                          <input
+                            type="text"
+                            placeholder="Agency / Office Name"
+                            value={formData.agency_name}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                agency_name: e.target.value,
+                              })
+                            }
+                            className="w-full border rounded-xl p-4"
+                            required
+                          />
+
+                          <input
+                            type="text"
+                            placeholder="Reference Number"
+                            value={formData.reference_number}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                reference_number: e.target.value,
+                              })
+                            }
+                            className="w-full border rounded-xl p-4"
+                            required
+                          />
+                        </>
+                      )}
+
+                      {formData.reason_type === "service" && (
+                        <input
+                          type="text"
+                          placeholder="Services"
+                          value={formData.service_name}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              service_name: e.target.value,
+                            })
+                          }
+                          className="w-full border rounded-xl p-4"
+                          required
+                        />
+                      )}
+
+                      <input
+                        type="text"
+                        placeholder="Your name"
+                        value={formData.customer_name}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            customer_name: e.target.value,
+                          })
+                        }
+                        className="w-full border rounded-xl p-4"
+                        required
+                      />
+
+                      <input
+                        type="email"
+                        placeholder="Email"
+                        value={formData.customer_email}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            customer_email: e.target.value,
+                          })
+                        }
+                        className="w-full border rounded-xl p-4"
+                        required
+                      />
+
+                      <div className="grid grid-cols-[140px_1fr] gap-3">
+                        <select
+                          value={formData.country_code}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              country_code: e.target.value,
+                            })
+                          }
+                          className="border rounded-xl p-4"
+                        >
+                          {COUNTRY_CODES.map((country) => (
+                            <option key={`${country.name}-${country.code}`} value={country.code}>
+                              {country.name} {country.code}
+                            </option>
+                          ))}
+                        </select>
+
+                        <input
+                          type="tel"
+                          inputMode="tel"
+                          placeholder="Phone / WhatsApp"
+                          value={formData.customer_phone}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              customer_phone: e.target.value,
+                            })
+                          }
+                          className="w-full border rounded-xl p-4"
+                          required
+                        />
+                      </div>
+
+                      <textarea
+                        placeholder="Optional note"
+                        value={formData.invoice_note}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            invoice_note: e.target.value,
+                          })
+                        }
+                        className="w-full border rounded-xl p-4 h-24"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => setCustomerStep(4)}
+                        className="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-4 rounded-xl"
+                      >
+                        Continue
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {customerStep === 4 && (
+                  <div>
+                    <StepTitle
+                      number="4"
+                      title="Review & Send"
+                      description="Confirm your request before sending."
+                    />
+
+                    <div className="bg-slate-50 rounded-3xl p-5 space-y-3">
+                      <p>
+                        <strong>QR / Invoice:</strong>{" "}
+                        {qrFile ? qrFile.name : "No file selected"}
+                      </p>
+                      <p>
+                        <strong>Method:</strong> {formData.payment_method}
+                      </p>
+                      <p>
+                        <strong>Amount:</strong> ฿
+                        {Number(formData.amount_thb || 0).toFixed(2)}
+                      </p>
+                      <p>
+                        <strong>Phone:</strong> {formData.country_code}{" "}
+                        {formData.customer_phone}
+                      </p>
+                      <p>
+                        <strong>Email:</strong> {formData.customer_email}
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 mt-5">
+                      <button
+                        type="button"
+                        onClick={() => setCustomerStep(3)}
+                        className="bg-gray-100 font-bold py-4 rounded-xl"
+                      >
+                        Back
+                      </button>
+
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="bg-sky-500 hover:bg-sky-600 text-white font-bold py-4 rounded-xl disabled:opacity-50"
+                      >
+                        {loading ? "Sending..." : "Send Request"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {customerStep === 5 && (
+                  <div>
+                    <StepTitle
+                      number="✓"
+                      title="Request Sent"
+                      description="Your live tracking is ready below."
+                    />
+
+                    {successMessage && (
+                      <div className="bg-green-100 text-green-700 rounded-xl p-4 font-semibold">
+                        {successMessage}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={lookupTracking}
+                      className="w-full mt-4 bg-sky-500 text-white font-bold py-4 rounded-xl"
+                    >
+                      Refresh Tracking
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerStep(1)
+                        setSuccessMessage("")
+                      }}
+                      className="w-full mt-3 bg-gray-100 font-bold py-4 rounded-xl"
+                    >
+                      Submit Another Request
+                    </button>
                   </div>
                 )}
               </form>
@@ -661,12 +941,17 @@ export default function App() {
                         </p>
 
                         <p className="mt-3 text-xl font-bold">
-                          ฿{request.amount_thb} — {request.payment_method}
+                          ฿{Number(request.amount_thb || 0).toFixed(2)} —{" "}
+                          {request.payment_method}
                         </p>
 
                         <p className="mt-2">
                           <span className="font-bold">Tracking ID:</span>{" "}
                           {request.tracking_id || "Not assigned"}
+                        </p>
+
+                        <p className="text-gray-500 mt-2 whitespace-pre-line">
+                          {request.invoice_note}
                         </p>
 
                         <p className="text-gray-500 mt-2">
@@ -688,8 +973,6 @@ export default function App() {
                             {new Date(request.email_sent_at).toLocaleString()}
                           </p>
                         )}
-
-                        <p className="mt-4">{request.invoice_note}</p>
                       </div>
 
                       <StatusBadge status={request.status} />
@@ -827,6 +1110,103 @@ export default function App() {
             )}
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+function StepProgress({ step }) {
+  const steps = ["Photo", "Card", "Info", "Send"]
+
+  return (
+    <div className="grid grid-cols-4 gap-2">
+      {steps.map((label, index) => {
+        const stepNumber = index + 1
+        const active = step >= stepNumber
+
+        return (
+          <div
+            key={label}
+            className={`rounded-2xl p-3 text-center font-bold text-sm ${
+              active ? "bg-sky-500 text-white" : "bg-gray-100 text-gray-500"
+            }`}
+          >
+            {stepNumber}. {label}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function StepTitle({ number, title, description }) {
+  return (
+    <div className="mb-5">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-sky-500 text-white rounded-full flex items-center justify-center font-bold">
+          {number}
+        </div>
+        <h3 className="text-2xl font-bold">{title}</h3>
+      </div>
+      <p className="text-gray-500 mt-2">{description}</p>
+    </div>
+  )
+}
+
+function ReasonButton({ active, onClick, title }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-left rounded-2xl p-4 font-bold border ${
+        active
+          ? "bg-sky-50 border-sky-500 text-sky-700"
+          : "bg-white border-gray-200"
+      }`}
+    >
+      {title}
+    </button>
+  )
+}
+
+function TrackingCard({ trackingResult, setPreview }) {
+  return (
+    <div className="mt-4 bg-white rounded-2xl p-5 border">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-bold text-lg">
+            Tracking ID: {trackingResult.tracking_id}
+          </p>
+          <p className="text-gray-600">
+            Amount: ฿{Number(trackingResult.amount_thb || 0).toFixed(2)}
+          </p>
+          <p className="text-gray-600">
+            Method: {trackingResult.payment_method}
+          </p>
+        </div>
+
+        <StatusBadge status={trackingResult.status} />
+      </div>
+
+      {trackingResult.status === "paid" && trackingResult.receipt_url && (
+        <button
+          onClick={() =>
+            setPreview({
+              title: "Payment Receipt",
+              url: trackingResult.receipt_url,
+            })
+          }
+          className="mt-4 bg-green-500 text-white px-5 py-3 rounded-xl font-bold"
+        >
+          View Receipt
+        </button>
+      )}
+
+      {trackingResult.status !== "paid" && (
+        <p className="mt-4 text-gray-500">
+          Your request is live. This screen updates as the operator marks it
+          processing or paid.
+        </p>
       )}
     </div>
   )
