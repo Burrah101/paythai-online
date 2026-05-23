@@ -111,6 +111,10 @@ function sortRequestsForOps(list) {
   })
 }
 
+function cleanTrackingId(value) {
+  return String(value || "").trim().toUpperCase()
+}
+
 export default function App() {
   const [view, setView] = useState(() => {
     return localStorage.getItem("paythai_view") || "customer"
@@ -163,6 +167,20 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("paythai_view", view)
   }, [view])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const urlTracking =
+      params.get("track") || params.get("tracking") || params.get("id")
+
+    if (urlTracking) {
+      const cleaned = cleanTrackingId(urlTracking)
+      localStorage.setItem("paythai_tracking", cleaned)
+      setTrackingSearch(cleaned)
+      setCustomerStep(5)
+      setView("customer")
+    }
+  }, [])
 
   useEffect(() => {
     if (!operatorUnlocked) return
@@ -236,7 +254,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const activeTracking = trackingSearch.trim().toUpperCase()
+    const activeTracking = cleanTrackingId(trackingSearch)
     if (!activeTracking) return
 
     async function loadTracking() {
@@ -299,12 +317,19 @@ export default function App() {
   function openCustomerTracking(request) {
     if (!request?.tracking_id) return
 
-    localStorage.setItem("paythai_tracking", request.tracking_id)
-    setTrackingSearch(request.tracking_id)
+    const trackingId = cleanTrackingId(request.tracking_id)
+
+    localStorage.setItem("paythai_tracking", trackingId)
+    setTrackingSearch(trackingId)
     setTrackingResult(request)
     setTrackingMessage("")
     setCustomerStep(5)
     setView("customer")
+
+    const newUrl = `${window.location.pathname}?track=${encodeURIComponent(
+      trackingId
+    )}`
+    window.history.pushState({}, "", newUrl)
 
     window.scrollTo({
       top: 0,
@@ -399,6 +424,11 @@ export default function App() {
       setTrackingSearch(trackingId)
       setSuccessMessage(`Request received. Tracking ID: ${trackingId}`)
       setCustomerStep(5)
+
+      const newUrl = `${window.location.pathname}?track=${encodeURIComponent(
+        trackingId
+      )}`
+      window.history.pushState({}, "", newUrl)
 
       setFormData({
         customer_name: "",
@@ -582,7 +612,7 @@ export default function App() {
     setTrackingResult(null)
     setTrackingMessage("")
 
-    const cleaned = trackingSearch.trim().toUpperCase()
+    const cleaned = cleanTrackingId(trackingSearch)
 
     if (!cleaned) {
       setTrackingMessage("Enter your tracking ID.")
@@ -590,6 +620,12 @@ export default function App() {
     }
 
     localStorage.setItem("paythai_tracking", cleaned)
+    setTrackingSearch(cleaned)
+
+    const newUrl = `${window.location.pathname}?track=${encodeURIComponent(
+      cleaned
+    )}`
+    window.history.pushState({}, "", newUrl)
 
     const { data, error } = await supabase
       .from("payment_requests")
@@ -791,21 +827,20 @@ export default function App() {
               </div>
 
               <h2 className="text-4xl md:text-5xl font-bold leading-tight mb-6">
-                Pay Thai QR bills with guided local payment support.
+                Pay Thai QR bills with
+local payment support.
               </h2>
 
               <p className="text-gray-600 mb-6">
-                PayThai is a manual concierge payment service for visitors who
-                need help completing Thai QR, invoice, condo, utility, ticket,
-                or local service payments.
+                PayThai helps visitors securely complete Thai QR and local invoice payments with tracking and confirmation updates.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
-                  No Thai bank needed
+                  Tourist-friendly payments
                 </div>
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
-                  QR / invoice upload
+                  Upload QR or invoice
                 </div>
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
                   Receipt tracking
@@ -814,13 +849,14 @@ export default function App() {
 
               <div className="mt-5 bg-blue-50 border border-blue-100 rounded-3xl p-5">
                 <h3 className="font-bold text-lg mb-2">
-                  Simple concierge flow
+                  Thai QR payment support
                 </h3>
 
                 <p className="text-gray-600 mb-3">
-                  Upload the Thai QR or bill, enter payment details, and track
-                  the request. You receive one final confirmation email after
-                  payment is completed.
+                  <p className="text-gray-700 leading-relaxed">
+  Upload your Thai QR or invoice, submit payment details,
+  and receive confirmation updates while PayThai handles the rest.
+</p>
                 </p>
 
                 <p className="text-gray-600 mb-3">
@@ -829,8 +865,9 @@ export default function App() {
                   and service type.
                 </p>
 
-                <p className="text-xs text-gray-500">
-                  Secure manual payment coordination with receipt confirmation and tracking.
+                <p className="text-xs text-gray-500 mt-4 leading-relaxed">
+                  Secure manual payment coordination with receipt confirmation
+                  and tracking.
                 </p>
               </div>
 
@@ -843,54 +880,18 @@ export default function App() {
                 <p className="font-bold mt-2">support@paythai.online</p>
               </div>
 
-              <div className="mt-8 bg-slate-50 rounded-3xl p-5">
-                <h3 className="text-2xl font-bold mb-2">Track Payment</h3>
-                <p className="text-gray-500 mb-4">
-                  Enter your tracking ID to check live payment status.
-                </p>
-
-                <form
-                  onSubmit={lookupTracking}
-                  className="flex flex-col sm:flex-row gap-3"
-                >
-                  <input
-                    value={trackingSearch}
-                    onChange={(e) => setTrackingSearch(e.target.value)}
-                    placeholder="Example: PT-123456"
-                    className="flex-1 border rounded-xl p-4 uppercase"
-                  />
-
-                  <button className="bg-sky-500 text-white font-bold px-5 py-4 rounded-xl">
-                    Check Status
-                  </button>
-                </form>
-
-                {trackingResult && (
-                  <button
-                    type="button"
-                    onClick={lookupTracking}
-                    className="w-full mt-3 bg-gray-900 text-white font-bold px-5 py-4 rounded-xl"
-                  >
-                    Refresh Tracking
-                  </button>
-                )}
-
-                {trackingMessage && (
-                  <div className="mt-4 bg-yellow-100 text-yellow-800 rounded-xl p-4 font-semibold">
-                    {trackingMessage}
-                  </div>
-                )}
-
-                {trackingResult && (
-                  <TrackingCard
-                    trackingResult={trackingResult}
-                    setPreview={setPreview}
-                  />
-                )}
-              </div>
+              <PublicTrackingPanel
+                trackingSearch={trackingSearch}
+                setTrackingSearch={setTrackingSearch}
+                lookupTracking={lookupTracking}
+                trackingResult={trackingResult}
+                trackingMessage={trackingMessage}
+                setPreview={setPreview}
+                copiedId={copiedId}
+                copyTrackingId={copyTrackingId}
+              />
             </div>
 
-            {/* Rest of app is unchanged from current working security version */}
             <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm">
               <h2 className="text-3xl font-bold mb-2">Submit Payment Request</h2>
               <p className="text-gray-500 mb-6">
@@ -1259,6 +1260,7 @@ export default function App() {
                       setTrackingResult(null)
                       setCustomerStep(1)
                       setSuccessMessage("")
+                      window.history.pushState({}, "", window.location.pathname)
                     }}
                   />
                 )}
@@ -1689,6 +1691,244 @@ export default function App() {
   )
 }
 
+function PublicTrackingPanel({
+  trackingSearch,
+  setTrackingSearch,
+  lookupTracking,
+  trackingResult,
+  trackingMessage,
+  setPreview,
+  copiedId,
+  copyTrackingId,
+}) {
+  return (
+    <div className="mt-8 bg-slate-50 rounded-3xl p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <div>
+          <h3 className="text-2xl font-bold">Track Payment</h3>
+          <p className="text-gray-500">
+            Enter your Tracking ID to view your live request status.
+          </p>
+        </div>
+
+        {trackingResult?.tracking_id && (
+          <button
+            type="button"
+            onClick={() => copyTrackingId(trackingResult.tracking_id)}
+            className="bg-gray-900 text-white px-4 py-3 rounded-xl font-bold"
+          >
+            {copiedId === trackingResult.tracking_id
+              ? "Copied ✓"
+              : "Copy Tracking ID"}
+          </button>
+        )}
+      </div>
+
+      <form onSubmit={lookupTracking} className="flex flex-col sm:flex-row gap-3">
+        <input
+          value={trackingSearch}
+          onChange={(e) => setTrackingSearch(e.target.value.toUpperCase())}
+          placeholder="Example: PT-123456"
+          className="flex-1 border rounded-xl p-4 uppercase"
+        />
+
+        <button className="bg-sky-500 text-white font-bold px-5 py-4 rounded-xl">
+          Check Status
+        </button>
+      </form>
+
+      {trackingResult && (
+        <button
+          type="button"
+          onClick={lookupTracking}
+          className="w-full mt-3 bg-gray-900 text-white font-bold px-5 py-4 rounded-xl"
+        >
+          Refresh Tracking
+        </button>
+      )}
+
+      {trackingMessage && (
+        <div className="mt-4 bg-yellow-100 text-yellow-800 rounded-xl p-4 font-semibold">
+          {trackingMessage}
+        </div>
+      )}
+
+      {trackingResult && (
+        <TrackingStatusPage
+          trackingResult={trackingResult}
+          setPreview={setPreview}
+        />
+      )}
+    </div>
+  )
+}
+
+function TrackingStatusPage({ trackingResult, setPreview }) {
+  const status = trackingResult.status
+  const isPending = status === "pending"
+  const isProcessing = status === "processing"
+  const isPaid = status === "paid"
+  const isFailed = status === "failed"
+
+  return (
+    <div className="mt-5 bg-white rounded-3xl border p-5">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div>
+          <p className="text-sm text-gray-500 font-semibold">Tracking ID</p>
+          <p className="text-3xl font-bold">{trackingResult.tracking_id}</p>
+
+          <p className="text-gray-600 mt-2">
+            Amount: {formatTHB(trackingResult.amount_thb)}
+          </p>
+
+          <p className="text-gray-600">
+            Method: {trackingResult.payment_method}
+          </p>
+        </div>
+
+        <StatusBadge status={status} />
+      </div>
+
+      <div className="mt-5">
+        <StatusTimeline trackingResult={trackingResult} />
+      </div>
+
+      <div className="mt-5 grid gap-3">
+        {isPending && (
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+            <p className="font-bold text-blue-700">Request received</p>
+            <p className="text-sm text-gray-600">
+              Your request is waiting for operator review.
+            </p>
+          </div>
+        )}
+
+        {isProcessing && (
+          <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
+            <p className="font-bold text-orange-700">Processing now</p>
+            <p className="text-sm text-gray-600">
+              Your request is being handled. Receipt confirmation will appear
+              here once available.
+            </p>
+          </div>
+        )}
+
+        {isPaid && (
+          <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
+            <p className="font-bold text-green-700">Payment completed</p>
+            <p className="text-sm text-gray-600">
+              Your receipt is ready. A final confirmation email has been sent or
+              will arrive shortly.
+            </p>
+          </div>
+        )}
+
+        {isFailed && (
+          <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
+            <p className="font-bold text-red-700">Request needs attention</p>
+            <p className="text-sm text-gray-600">
+              Please contact support with your Tracking ID.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {trackingResult.receipt_url && (
+        <button
+          onClick={() =>
+            setPreview({
+              title: "Payment Receipt",
+              url: trackingResult.receipt_url,
+            })
+          }
+          className="w-full mt-5 bg-green-500 text-white px-5 py-4 rounded-xl font-bold"
+        >
+          View Receipt
+        </button>
+      )}
+
+      <div className="mt-5 border-t pt-4">
+        <p className="text-sm text-gray-500">
+          Need help? Email{" "}
+          <span className="font-bold text-gray-700">support@paythai.online</span>{" "}
+          with your Tracking ID.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function StatusTimeline({ trackingResult }) {
+  const status = trackingResult.status
+
+  const steps = [
+    {
+      key: "pending",
+      label: "Request received",
+      complete: ["pending", "processing", "paid"].includes(status),
+      time: trackingResult.created_at,
+    },
+    {
+      key: "processing",
+      label: "Processing",
+      complete: ["processing", "paid"].includes(status),
+      time: trackingResult.processing_at,
+    },
+    {
+      key: "paid",
+      label: "Payment completed",
+      complete: status === "paid",
+      time: trackingResult.paid_at,
+    },
+    {
+      key: "receipt",
+      label: "Receipt ready",
+      complete: !!trackingResult.receipt_url,
+      time: trackingResult.paid_at,
+    },
+    {
+      key: "email",
+      label: "Final email sent",
+      complete: !!trackingResult.email_sent_at,
+      time: trackingResult.email_sent_at,
+    },
+  ]
+
+  return (
+    <div className="space-y-3">
+      {steps.map((step) => (
+        <div key={step.key} className="flex items-start gap-3">
+          <div
+            className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-sm ${
+              step.complete
+                ? "bg-green-500 text-white"
+                : "bg-gray-200 text-gray-500"
+            }`}
+          >
+            {step.complete ? "✓" : "•"}
+          </div>
+
+          <div>
+            <p
+              className={`font-bold ${
+                step.complete ? "text-gray-900" : "text-gray-400"
+              }`}
+            >
+              {step.label}
+            </p>
+
+            {step.time && (
+              <p className="text-xs text-gray-500">
+                {new Date(step.time).toLocaleString()}
+              </p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function SuccessPanel({
   successMessage,
   trackingSearch,
@@ -1830,44 +2070,7 @@ function ReasonButton({ active, onClick, title }) {
 
 function TrackingCard({ trackingResult, setPreview }) {
   return (
-    <div className="mt-4 bg-white rounded-2xl p-5 border">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="font-bold text-lg">
-            Tracking ID: {trackingResult.tracking_id}
-          </p>
-          <p className="text-gray-600">
-            Amount: {formatTHB(trackingResult.amount_thb)}
-          </p>
-          <p className="text-gray-600">
-            Method: {trackingResult.payment_method}
-          </p>
-        </div>
-
-        <StatusBadge status={trackingResult.status} />
-      </div>
-
-      {trackingResult.status === "paid" && trackingResult.receipt_url && (
-        <button
-          onClick={() =>
-            setPreview({
-              title: "Payment Receipt",
-              url: trackingResult.receipt_url,
-            })
-          }
-          className="mt-4 bg-green-500 text-white px-5 py-3 rounded-xl font-bold"
-        >
-          View Receipt
-        </button>
-      )}
-
-      {trackingResult.status !== "paid" && (
-        <p className="mt-4 text-gray-500">
-          Your request is live. Use Refresh Tracking above to check the latest
-          status.
-        </p>
-      )}
-    </div>
+    <TrackingStatusPage trackingResult={trackingResult} setPreview={setPreview} />
   )
 }
 
