@@ -791,12 +791,13 @@ export default function App() {
               </div>
 
               <h2 className="text-4xl md:text-5xl font-bold leading-tight mb-6">
-                Pay Thai QR bills without a Thai bank account.
+                Pay Thai QR bills with guided local payment support.
               </h2>
 
               <p className="text-gray-600 mb-6">
-                Upload a Thai QR, invoice, condo bill, or payment note. PayThai
-                helps coordinate the payment and confirmation.
+                PayThai is a manual concierge payment service for visitors who
+                need help completing Thai QR, invoice, condo, utility, ticket,
+                or local service payments.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -809,6 +810,37 @@ export default function App() {
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
                   Receipt tracking
                 </div>
+              </div>
+
+              <div className="mt-5 bg-blue-50 border border-blue-100 rounded-3xl p-5">
+                <h3 className="font-bold text-lg mb-2">
+                  Simple concierge flow
+                </h3>
+
+                <p className="text-gray-600 mb-3">
+                  Upload the Thai QR or bill, enter payment details, and track
+                  the request. You receive one final confirmation email after
+                  payment is completed.
+                </p>
+
+                <p className="text-gray-600 mb-3">
+                  Fee notice: PayThai service fees are shown or confirmed before
+                  processing. Exact fees may depend on payment method, amount,
+                  and service type.
+                </p>
+
+                <p className="text-xs text-gray-500">
+                  Secure manual payment coordination with receipt confirmation and tracking.
+                </p>
+              </div>
+
+              <div className="mt-5 bg-slate-50 rounded-3xl p-5">
+                <h3 className="font-bold text-lg mb-2">Support</h3>
+                <p className="text-gray-600">
+                  For help with a payment request, use your Tracking ID and
+                  contact:
+                </p>
+                <p className="font-bold mt-2">support@paythai.online</p>
               </div>
 
               <div className="mt-8 bg-slate-50 rounded-3xl p-5">
@@ -858,9 +890,9 @@ export default function App() {
               </div>
             </div>
 
+            {/* Rest of app is unchanged from current working security version */}
             <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm">
               <h2 className="text-3xl font-bold mb-2">Submit Payment Request</h2>
-
               <p className="text-gray-500 mb-6">
                 Four simple steps. Upload the Thai QR first.
               </p>
