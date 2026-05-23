@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react"
 import { supabase } from "./lib/supabase"
 
 const OPERATOR_PIN = import.meta.env.VITE_OPERATOR_PIN || "2400"
+const OPERATOR_AUTO_LOCK_MS = 15 * 60 * 1000
 
 const COUNTRY_CODES = [
   { name: "Thailand", code: "+66" },
@@ -119,12 +120,11 @@ export default function App() {
     return localStorage.getItem("paythai_tracking") ? 5 : 1
   })
 
-  const [operatorUnlocked, setOperatorUnlocked] = useState(() => {
-    return localStorage.getItem("paythai_operator_unlocked") === "yes"
-  })
-
+  const [operatorUnlocked, setOperatorUnlocked] = useState(false)
   const [operatorPinInput, setOperatorPinInput] = useState("")
   const [operatorError, setOperatorError] = useState("")
+  const [operatorFailedAttempts, setOperatorFailedAttempts] = useState(0)
+  const [operatorBlockedUntil, setOperatorBlockedUntil] = useState(0)
 
   const [requests, setRequests] = useState([])
   const [search, setSearch] = useState("")
@@ -132,6 +132,8 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState(null)
   const [noteSavedId, setNoteSavedId] = useState(null)
+  const [copiedId, setCopiedId] = useState("")
+  const [paidActionId, setPaidActionId] = useState(null)
 
   const [trackingSearch, setTrackingSearch] = useState(() => {
     return localStorage.getItem("paythai_tracking") || ""
@@ -161,6 +163,40 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("paythai_view", view)
   }, [view])
+
+  useEffect(() => {
+    if (!operatorUnlocked) return
+
+    let lockTimer = null
+
+    function lockOperator() {
+      setOperatorUnlocked(false)
+      setOperatorPinInput("")
+      setOperatorError("Operator auto-locked after inactivity.")
+      setView("customer")
+    }
+
+    function resetTimer() {
+      clearTimeout(lockTimer)
+      lockTimer = setTimeout(lockOperator, OPERATOR_AUTO_LOCK_MS)
+    }
+
+    const events = ["mousemove", "keydown", "click", "touchstart"]
+
+    events.forEach((eventName) => {
+      window.addEventListener(eventName, resetTimer)
+    })
+
+    resetTimer()
+
+    return () => {
+      clearTimeout(lockTimer)
+
+      events.forEach((eventName) => {
+        window.removeEventListener(eventName, resetTimer)
+      })
+    }
+  }, [operatorUnlocked])
 
   async function fetchRequests() {
     const { data, error } = await supabase
@@ -249,6 +285,11 @@ export default function App() {
 
     try {
       await navigator.clipboard.writeText(trackingId)
+      setCopiedId(trackingId)
+
+      setTimeout(() => {
+        setCopiedId("")
+      }, 1500)
     } catch (error) {
       console.error(error)
       alert("Could not copy tracking ID")
@@ -415,6 +456,8 @@ export default function App() {
     }
 
     if (status === "paid") {
+      if (paidActionId) return
+
       if (!request.receipt_url) {
         alert("Upload receipt before marking Paid.")
         return
@@ -426,37 +469,44 @@ export default function App() {
 
       if (!confirmed) return
 
+      setPaidActionId(request.id)
       updatePayload.paid_at = new Date().toISOString()
     }
 
-    const { error } = await supabase
-      .from("payment_requests")
-      .update(updatePayload)
-      .eq("id", request.id)
+    try {
+      const { error } = await supabase
+        .from("payment_requests")
+        .update(updatePayload)
+        .eq("id", request.id)
 
-    if (error) {
-      console.error(error)
-      alert("Status update failed")
-      return
-    }
+      if (error) {
+        console.error(error)
+        alert("Status update failed")
+        return
+      }
 
-    if (status === "paid" && !request.email_sent_at) {
-      try {
-        await sendPaidEmail(request)
+      if (status === "paid" && !request.email_sent_at) {
+        try {
+          await sendPaidEmail(request)
 
-        await supabase
-          .from("payment_requests")
-          .update({
-            email_sent_at: new Date().toISOString(),
-          })
-          .eq("id", request.id)
-      } catch (emailError) {
-        console.error("Email send failed:", emailError)
-        alert("Marked paid, but email did not send. Check Vercel/API settings.")
+          await supabase
+            .from("payment_requests")
+            .update({
+              email_sent_at: new Date().toISOString(),
+            })
+            .eq("id", request.id)
+        } catch (emailError) {
+          console.error("Email send failed:", emailError)
+          alert("Marked paid, but email did not send. Check Vercel/API settings.")
+        }
+      }
+
+      fetchRequests()
+    } finally {
+      if (status === "paid") {
+        setPaidActionId(null)
       }
     }
-
-    fetchRequests()
   }
 
   async function updateOperatorNote(requestId, note) {
@@ -566,18 +616,38 @@ export default function App() {
     e.preventDefault()
     setOperatorError("")
 
+    const now = Date.now()
+
+    if (operatorBlockedUntil && now < operatorBlockedUntil) {
+      const seconds = Math.ceil((operatorBlockedUntil - now) / 1000)
+      setOperatorError(`Please wait ${seconds} seconds before trying again.`)
+      return
+    }
+
     if (operatorPinInput === OPERATOR_PIN) {
-      localStorage.setItem("paythai_operator_unlocked", "yes")
       setOperatorUnlocked(true)
       setOperatorPinInput("")
+      setOperatorError("")
+      setOperatorFailedAttempts(0)
+      setOperatorBlockedUntil(0)
     } else {
-      setOperatorError("Wrong operator PIN.")
+      const attempts = operatorFailedAttempts + 1
+      const delayMs = Math.min(10000, attempts * 2000)
+
+      setOperatorFailedAttempts(attempts)
+      setOperatorBlockedUntil(Date.now() + delayMs)
+      setOperatorError(`Wrong operator PIN. Wait ${Math.ceil(delayMs / 1000)} seconds.`)
+
+      setTimeout(() => {
+        setOperatorBlockedUntil(0)
+      }, delayMs)
     }
   }
 
   function logoutOperator() {
-    localStorage.removeItem("paythai_operator_unlocked")
     setOperatorUnlocked(false)
+    setOperatorPinInput("")
+    setOperatorError("")
     setView("customer")
   }
 
@@ -664,6 +734,9 @@ export default function App() {
       avgTicket,
     }
   }, [requests])
+
+  const operatorLoginDisabled =
+    operatorBlockedUntil && Date.now() < operatorBlockedUntil
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-6">
@@ -1146,6 +1219,7 @@ export default function App() {
                   <SuccessPanel
                     successMessage={successMessage}
                     trackingSearch={trackingSearch}
+                    copiedId={copiedId}
                     onCopy={() => copyTrackingId(trackingSearch)}
                     onSubmitAnother={() => {
                       localStorage.removeItem("paythai_tracking")
@@ -1165,7 +1239,8 @@ export default function App() {
           <div className="bg-white rounded-3xl p-8 shadow-sm max-w-md mx-auto">
             <h2 className="text-3xl font-bold mb-2">Operator Login</h2>
             <p className="text-gray-500 mb-6">
-              Enter operator PIN to access dashboard.
+              Enter operator PIN to access dashboard. This session locks on
+              refresh, browser close, or inactivity.
             </p>
 
             <form onSubmit={loginOperator} className="space-y-4">
@@ -1178,7 +1253,10 @@ export default function App() {
                 className="w-full border rounded-xl p-4"
               />
 
-              <button className="w-full bg-sky-500 text-white font-bold py-4 rounded-xl">
+              <button
+                disabled={operatorLoginDisabled}
+                className="w-full bg-sky-500 text-white font-bold py-4 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 Unlock Operator Dashboard
               </button>
 
@@ -1200,7 +1278,7 @@ export default function App() {
                 </h2>
 
                 <p className="text-gray-500">
-                  Live payment requests from Supabase.
+                  Session-only access. Auto-locks after inactivity.
                 </p>
               </div>
 
@@ -1293,10 +1371,6 @@ export default function App() {
                             {request.customer_email}
                           </p>
 
-                          <p className="text-gray-600">
-                            {request.customer_phone}
-                          </p>
-
                           <p className="mt-3 text-xl font-bold">
                             {formatTHB(request.amount_thb)} —{" "}
                             {request.payment_method}
@@ -1304,6 +1378,7 @@ export default function App() {
 
                           <TrackingLine
                             trackingId={request.tracking_id}
+                            copiedId={copiedId}
                             onCopy={copyTrackingId}
                             onOpen={() => openCustomerTracking(request)}
                           />
@@ -1385,6 +1460,7 @@ export default function App() {
 
                         <TrackingLine
                           trackingId={request.tracking_id}
+                          copiedId={copiedId}
                           onCopy={copyTrackingId}
                           onOpen={() => openCustomerTracking(request)}
                         />
@@ -1510,15 +1586,15 @@ export default function App() {
                       </button>
 
                       <button
-                        disabled={isLocked || !hasReceipt}
+                        disabled={isLocked || !hasReceipt || paidActionId === request.id}
                         onClick={() => updateStatus(request, "paid")}
                         className={`px-5 py-3 rounded-xl font-bold text-white ${
-                          isLocked || !hasReceipt
+                          isLocked || !hasReceipt || paidActionId === request.id
                             ? "bg-gray-300 cursor-not-allowed"
                             : "bg-green-500 hover:bg-green-600"
                         }`}
                       >
-                        Paid
+                        {paidActionId === request.id ? "Sending..." : "Paid"}
                       </button>
 
                       <button
@@ -1581,7 +1657,13 @@ export default function App() {
   )
 }
 
-function SuccessPanel({ successMessage, trackingSearch, onCopy, onSubmitAnother }) {
+function SuccessPanel({
+  successMessage,
+  trackingSearch,
+  copiedId,
+  onCopy,
+  onSubmitAnother,
+}) {
   return (
     <div>
       <div className="bg-green-50 border border-green-200 rounded-3xl p-6 text-center">
@@ -1605,7 +1687,7 @@ function SuccessPanel({ successMessage, trackingSearch, onCopy, onSubmitAnother 
           onClick={onCopy}
           className="w-full bg-gray-900 text-white font-bold py-4 rounded-xl mb-3"
         >
-          Copy Tracking ID
+          {copiedId === trackingSearch ? "Copied ✓" : "Copy Tracking ID"}
         </button>
 
         {successMessage && (
@@ -1629,7 +1711,7 @@ function SuccessPanel({ successMessage, trackingSearch, onCopy, onSubmitAnother 
   )
 }
 
-function TrackingLine({ trackingId, onCopy, onOpen }) {
+function TrackingLine({ trackingId, copiedId, onCopy, onOpen }) {
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
       <span>
@@ -1644,7 +1726,7 @@ function TrackingLine({ trackingId, onCopy, onOpen }) {
             onClick={() => onCopy(trackingId)}
             className="bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg text-sm font-bold"
           >
-            Copy ID
+            {copiedId === trackingId ? "Copied ✓" : "Copy ID"}
           </button>
 
           <button
