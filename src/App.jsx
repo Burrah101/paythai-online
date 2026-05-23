@@ -72,6 +72,7 @@ export default function App() {
 
   const [requests, setRequests] = useState([])
   const [search, setSearch] = useState("")
+  const [activeFilter, setActiveFilter] = useState("all")
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState(null)
 
@@ -494,7 +495,7 @@ export default function App() {
 
   const filteredRequests = useMemo(() => {
     return requests.filter((r) => {
-      const value = `
+      const searchableValue = `
         ${r.customer_name || ""}
         ${r.customer_email || ""}
         ${r.customer_phone || ""}
@@ -504,9 +505,14 @@ export default function App() {
         .toLowerCase()
         .trim()
 
-      return value.includes(search.toLowerCase())
+      const matchesSearch = searchableValue.includes(search.toLowerCase())
+
+      const matchesFilter =
+        activeFilter === "all" ? true : r.status === activeFilter
+
+      return matchesSearch && matchesFilter
     })
-  }, [requests, search])
+  }, [requests, search, activeFilter])
 
   const counts = {
     all: requests.length,
@@ -1074,6 +1080,63 @@ export default function App() {
               <div className="bg-green-500 text-white px-4 py-2 rounded-full font-bold w-fit">
                 LIVE
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              <button
+                onClick={() => setActiveFilter("all")}
+                className={`rounded-2xl p-3 font-bold transition ${
+                  activeFilter === "all"
+                    ? "bg-sky-500 text-white"
+                    : "bg-gray-100"
+                }`}
+              >
+                All
+              </button>
+
+              <button
+                onClick={() => setActiveFilter("pending")}
+                className={`rounded-2xl p-3 font-bold transition ${
+                  activeFilter === "pending"
+                    ? "bg-sky-500 text-white"
+                    : "bg-gray-100"
+                }`}
+              >
+                Pending
+              </button>
+
+              <button
+                onClick={() => setActiveFilter("processing")}
+                className={`rounded-2xl p-3 font-bold transition ${
+                  activeFilter === "processing"
+                    ? "bg-sky-500 text-white"
+                    : "bg-gray-100"
+                }`}
+              >
+                Processing
+              </button>
+
+              <button
+                onClick={() => setActiveFilter("paid")}
+                className={`rounded-2xl p-3 font-bold transition ${
+                  activeFilter === "paid"
+                    ? "bg-sky-500 text-white"
+                    : "bg-gray-100"
+                }`}
+              >
+                Paid
+              </button>
+
+              <button
+                onClick={() => setActiveFilter("failed")}
+                className={`rounded-2xl p-3 font-bold transition ${
+                  activeFilter === "failed"
+                    ? "bg-sky-500 text-white"
+                    : "bg-gray-100"
+                }`}
+              >
+                Failed
+              </button>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
