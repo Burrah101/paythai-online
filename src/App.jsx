@@ -330,6 +330,9 @@ export default function App() {
 
   async function updateStatus(request, status) {
     const updatePayload = { status }
+    if (status === "processing") {
+  updatePayload.processing_at = new Date().toISOString()
+}
 
     if (status === "paid") {
       if (!request.receipt_url) {
@@ -369,7 +372,22 @@ export default function App() {
 
     fetchRequests()
   }
+async function updateOperatorNote(requestId, note) {
+  const { error } = await supabase
+    .from("payment_requests")
+    .update({
+      operator_note: note,
+    })
+    .eq("id", requestId)
 
+  if (error) {
+    console.error(error)
+    alert("Operator note failed to save")
+    return
+  }
+
+  fetchRequests()
+}
   async function uploadReceipt(request, file) {
     if (!file) return
     if (request.receipt_url || request.status === "paid") return
@@ -1122,6 +1140,9 @@ export default function App() {
                 const isFailed = request.status === "failed"
                 const isLocked = isPaid || isFailed
                 const hasReceipt = !!request.receipt_url
+                const processingTime = request.processing_at
+  ? new Date(request.processing_at).toLocaleString()
+  : null
 
                 if (isPaid) {
                   return (
@@ -1239,6 +1260,11 @@ export default function App() {
 
                         <p className="text-gray-500 mt-2">
                           Submitted:{" "}
+                          {processingTime && (
+  <p className="text-orange-600">
+    Processing: {processingTime}
+  </p>
+)}
                           {request.created_at
                             ? new Date(request.created_at).toLocaleString()
                             : "No timestamp"}
@@ -1280,6 +1306,21 @@ export default function App() {
 
                     <div className="mt-6">
                       <p className="font-semibold mb-2">Upload receipt</p>
+                      <div className="mt-4">
+  <p className="text-sm font-semibold mb-2">
+    Internal operator note
+  </p>
+
+  <textarea
+    defaultValue={request.operator_note || ""}
+    placeholder="Internal notes (customer contacted, waiting confirmation, etc)"
+    className="w-full border rounded-2xl p-3 text-sm"
+    rows={3}
+    onBlur={(e) =>
+      updateOperatorNote(request.id, e.target.value)
+    }
+  />
+</div>
 
                       {hasReceipt ? (
                         <div className="bg-gray-100 rounded-xl p-4 text-gray-600 font-semibold">
