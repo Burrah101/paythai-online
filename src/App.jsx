@@ -904,10 +904,10 @@ local payment support.
                 {customerStep === 1 && (
                   <div>
                     <StepTitle
-                      number="1"
-                      title="Take Photo"
-                      description="Take a photo or upload a Thai QR, invoice, or condo bill."
-                    />
+  number="1"
+  title="Take Photo"
+  description="Take a photo or upload a Thai QR, invoice, or condo bill. Most requests are confirmed within minutes."
+/>
 
                     <label className="block bg-sky-500 hover:bg-sky-600 text-white rounded-3xl p-8 text-center font-bold text-2xl cursor-pointer shadow-sm">
                       📷 Take Photo / Upload QR
