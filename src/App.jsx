@@ -54,6 +54,24 @@ function formatPhoneNumber(countryCode, value) {
   return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 12)}`
 }
 
+function getTimeAgo(dateString) {
+  if (!dateString) return ""
+
+  const now = new Date()
+  const date = new Date(dateString)
+  const diffMs = now - date
+  const diffMin = Math.floor(diffMs / 60000)
+
+  if (diffMin < 1) return "Just now"
+  if (diffMin < 60) return `${diffMin} min`
+
+  const hours = Math.floor(diffMin / 60)
+  if (hours < 24) return `${hours} hr`
+
+  const days = Math.floor(hours / 24)
+  return `${days} day`
+}
+
 export default function App() {
   const [view, setView] = useState(() => {
     return localStorage.getItem("paythai_view") || "customer"
@@ -144,7 +162,6 @@ export default function App() {
 
   useEffect(() => {
     const activeTracking = trackingSearch.trim().toUpperCase()
-
     if (!activeTracking) return
 
     async function loadTracking() {
@@ -276,7 +293,6 @@ export default function App() {
 
       localStorage.setItem("paythai_tracking", trackingId)
       setTrackingSearch(trackingId)
-
       setSuccessMessage(`✅ Request submitted. Tracking ID: ${trackingId}`)
       setCustomerStep(5)
 
@@ -330,9 +346,10 @@ export default function App() {
 
   async function updateStatus(request, status) {
     const updatePayload = { status }
+
     if (status === "processing") {
-  updatePayload.processing_at = new Date().toISOString()
-}
+      updatePayload.processing_at = new Date().toISOString()
+    }
 
     if (status === "paid") {
       if (!request.receipt_url) {
@@ -372,22 +389,24 @@ export default function App() {
 
     fetchRequests()
   }
-async function updateOperatorNote(requestId, note) {
-  const { error } = await supabase
-    .from("payment_requests")
-    .update({
-      operator_note: note,
-    })
-    .eq("id", requestId)
 
-  if (error) {
-    console.error(error)
-    alert("Operator note failed to save")
-    return
+  async function updateOperatorNote(requestId, note) {
+    const { error } = await supabase
+      .from("payment_requests")
+      .update({
+        operator_note: note,
+      })
+      .eq("id", requestId)
+
+    if (error) {
+      console.error(error)
+      alert("Operator note failed to save")
+      return
+    }
+
+    fetchRequests()
   }
 
-  fetchRequests()
-}
   async function uploadReceipt(request, file) {
     if (!file) return
     if (request.receipt_url || request.status === "paid") return
@@ -416,6 +435,10 @@ async function updateOperatorNote(requestId, note) {
       .update({
         receipt_url: publicUrl,
         status: request.status === "pending" ? "processing" : request.status,
+        processing_at:
+          request.status === "pending"
+            ? new Date().toISOString()
+            : request.processing_at,
       })
       .eq("id", request.id)
 
@@ -524,7 +547,6 @@ async function updateOperatorNote(requestId, note) {
         .trim()
 
       const matchesSearch = searchableValue.includes(search.toLowerCase())
-
       const matchesFilter =
         activeFilter === "all" ? true : r.status === activeFilter
 
@@ -1141,8 +1163,8 @@ async function updateOperatorNote(requestId, note) {
                 const isLocked = isPaid || isFailed
                 const hasReceipt = !!request.receipt_url
                 const processingTime = request.processing_at
-  ? new Date(request.processing_at).toLocaleString()
-  : null
+                  ? new Date(request.processing_at).toLocaleString()
+                  : null
 
                 if (isPaid) {
                   return (
@@ -1189,15 +1211,7 @@ async function updateOperatorNote(requestId, note) {
                           )}
                         </div>
 
-                        <div className="flex flex-col items-end gap-2">
-  <StatusBadge status={request.status} />
-
-  <p className="text-sm font-semibold text-gray-500">
-    {request.status === "processing"
-      ? `Processing • ${getTimeAgo(request.processing_at || request.created_at)}`
-      : `Pending • ${getTimeAgo(request.created_at)}`}
-  </p>
-</div>
+                        <StatusBadge status={request.status} />
                       </div>
 
                       <div className="flex gap-3 mt-5 flex-wrap">
@@ -1268,18 +1282,29 @@ async function updateOperatorNote(requestId, note) {
 
                         <p className="text-gray-500 mt-2">
                           Submitted:{" "}
-                          {processingTime && (
-  <p className="text-orange-600">
-    Processing: {processingTime}
-  </p>
-)}
                           {request.created_at
                             ? new Date(request.created_at).toLocaleString()
                             : "No timestamp"}
                         </p>
+
+                        {processingTime && (
+                          <p className="text-orange-600">
+                            Processing: {processingTime}
+                          </p>
+                        )}
                       </div>
 
-                      <StatusBadge status={request.status} />
+                      <div className="flex flex-col items-end gap-2">
+                        <StatusBadge status={request.status} />
+
+                        <p className="text-sm font-semibold text-gray-500">
+                          {request.status === "processing"
+                            ? `Processing • ${getTimeAgo(
+                                request.processing_at || request.created_at
+                              )}`
+                            : `Pending • ${getTimeAgo(request.created_at)}`}
+                        </p>
+                      </div>
                     </div>
 
                     <div className="flex gap-3 mt-6 flex-wrap">
@@ -1314,21 +1339,6 @@ async function updateOperatorNote(requestId, note) {
 
                     <div className="mt-6">
                       <p className="font-semibold mb-2">Upload receipt</p>
-                      <div className="mt-4">
-  <p className="text-sm font-semibold mb-2">
-    Internal operator note
-  </p>
-
-  <textarea
-    defaultValue={request.operator_note || ""}
-    placeholder="Internal notes (customer contacted, waiting confirmation, etc)"
-    className="w-full border rounded-2xl p-3 text-sm"
-    rows={3}
-    onBlur={(e) =>
-      updateOperatorNote(request.id, e.target.value)
-    }
-  />
-</div>
 
                       {hasReceipt ? (
                         <div className="bg-gray-100 rounded-xl p-4 text-gray-600 font-semibold">
@@ -1345,6 +1355,22 @@ async function updateOperatorNote(requestId, note) {
                           className="w-full border rounded-xl p-4 disabled:bg-gray-100 disabled:cursor-not-allowed"
                         />
                       )}
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-sm font-semibold mb-2">
+                        Internal operator note
+                      </p>
+
+                      <textarea
+                        defaultValue={request.operator_note || ""}
+                        placeholder="Internal notes (customer contacted, waiting confirmation, etc)"
+                        className="w-full border rounded-2xl p-3 text-sm"
+                        rows={3}
+                        onBlur={(e) =>
+                          updateOperatorNote(request.id, e.target.value)
+                        }
+                      />
                     </div>
 
                     <div className="flex gap-3 mt-6 flex-wrap">
@@ -1539,31 +1565,7 @@ function Stat({ label, value }) {
     </div>
   )
 }
-function getTimeAgo(dateString) {
-  if (!dateString) return ""
 
-  const now = new Date()
-  const date = new Date(dateString)
-
-  const diffMs = now - date
-  const diffMin = Math.floor(diffMs / 60000)
-
-  if (diffMin < 1) return "Just now"
-
-  if (diffMin < 60) {
-    return `${diffMin} min`
-  }
-
-  const hours = Math.floor(diffMin / 60)
-
-  if (hours < 24) {
-    return `${hours} hr`
-  }
-
-  const days = Math.floor(hours / 24)
-
-  return `${days} day`
-}
 function StatusBadge({ status }) {
   return (
     <div
