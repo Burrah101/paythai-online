@@ -73,7 +73,10 @@ function getTimeAgo(dateString) {
 }
 
 function formatTHB(value) {
-  return `฿${Number(value || 0).toFixed(2)}`
+  return `฿${Number(value || 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
 }
 
 function isToday(dateString) {
@@ -87,6 +90,24 @@ function isToday(dateString) {
     date.getMonth() === today.getMonth() &&
     date.getDate() === today.getDate()
   )
+}
+
+function sortRequestsForOps(list) {
+  return [...list].sort((a, b) => {
+    const statusRank = {
+      pending: 1,
+      processing: 2,
+      failed: 3,
+      paid: 4,
+    }
+
+    const rankA = statusRank[a.status] || 9
+    const rankB = statusRank[b.status] || 9
+
+    if (rankA !== rankB) return rankA - rankB
+
+    return new Date(b.created_at || 0) - new Date(a.created_at || 0)
+  })
 }
 
 export default function App() {
@@ -335,7 +356,7 @@ export default function App() {
 
       localStorage.setItem("paythai_tracking", trackingId)
       setTrackingSearch(trackingId)
-      setSuccessMessage(`✅ Request submitted. Tracking ID: ${trackingId}`)
+      setSuccessMessage(`Request received. Tracking ID: ${trackingId}`)
       setCustomerStep(5)
 
       setFormData({
@@ -398,6 +419,12 @@ export default function App() {
         alert("Upload receipt before marking Paid.")
         return
       }
+
+      const confirmed = window.confirm(
+        "Mark this request as PAID and send the final customer email?"
+      )
+
+      if (!confirmed) return
 
       updatePayload.paid_at = new Date().toISOString()
     }
@@ -583,7 +610,7 @@ export default function App() {
   }
 
   const filteredRequests = useMemo(() => {
-    return requests.filter((r) => {
+    const filtered = requests.filter((r) => {
       const searchableValue = `
         ${r.customer_name || ""}
         ${r.customer_email || ""}
@@ -600,6 +627,8 @@ export default function App() {
 
       return matchesSearch && matchesFilter
     })
+
+    return sortRequestsForOps(filtered)
   }, [requests, search, activeFilter])
 
   const counts = {
@@ -1082,8 +1111,7 @@ export default function App() {
                         <strong>Method:</strong> {formData.payment_method}
                       </p>
                       <p>
-                        <strong>Amount:</strong> ฿
-                        {Number(formData.amount_thb || 0).toFixed(2)}
+                        <strong>Amount:</strong> {formatTHB(formData.amount_thb)}
                       </p>
                       <p>
                         <strong>Phone:</strong> {formData.country_code}{" "}
@@ -1115,33 +1143,18 @@ export default function App() {
                 )}
 
                 {customerStep === 5 && (
-                  <div>
-                    <StepTitle
-                      number="✓"
-                      title="Request Sent"
-                      description="Your live tracking is ready above."
-                    />
-
-                    {successMessage && (
-                      <div className="bg-green-100 text-green-700 rounded-xl p-4 font-semibold">
-                        {successMessage}
-                      </div>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        localStorage.removeItem("paythai_tracking")
-                        setTrackingSearch("")
-                        setTrackingResult(null)
-                        setCustomerStep(1)
-                        setSuccessMessage("")
-                      }}
-                      className="w-full mt-3 bg-gray-100 font-bold py-4 rounded-xl"
-                    >
-                      Submit Another Request
-                    </button>
-                  </div>
+                  <SuccessPanel
+                    successMessage={successMessage}
+                    trackingSearch={trackingSearch}
+                    onCopy={() => copyTrackingId(trackingSearch)}
+                    onSubmitAnother={() => {
+                      localStorage.removeItem("paythai_tracking")
+                      setTrackingSearch("")
+                      setTrackingResult(null)
+                      setCustomerStep(1)
+                      setSuccessMessage("")
+                    }}
+                  />
                 )}
               </form>
             </div>
@@ -1498,15 +1511,7 @@ export default function App() {
 
                       <button
                         disabled={isLocked || !hasReceipt}
-                        onClick={() => {
-                          const confirmed = window.confirm(
-                            "Mark this request as PAID and send the final customer email?"
-                          )
-
-                          if (!confirmed) return
-
-                          updateStatus(request, "paid")
-                        }}
+                        onClick={() => updateStatus(request, "paid")}
                         className={`px-5 py-3 rounded-xl font-bold text-white ${
                           isLocked || !hasReceipt
                             ? "bg-gray-300 cursor-not-allowed"
@@ -1572,6 +1577,54 @@ export default function App() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function SuccessPanel({ successMessage, trackingSearch, onCopy, onSubmitAnother }) {
+  return (
+    <div>
+      <div className="bg-green-50 border border-green-200 rounded-3xl p-6 text-center">
+        <div className="text-5xl mb-3">✅</div>
+
+        <h3 className="text-3xl font-bold mb-2">Request Received</h3>
+
+        <p className="text-gray-600 mb-5">
+          Your PayThai request is now in the operator queue.
+        </p>
+
+        <div className="bg-white rounded-2xl p-5 border mb-5">
+          <p className="text-sm text-gray-500 font-semibold">Tracking ID</p>
+          <p className="text-3xl font-bold tracking-wide">
+            {trackingSearch || "Not assigned"}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onCopy}
+          className="w-full bg-gray-900 text-white font-bold py-4 rounded-xl mb-3"
+        >
+          Copy Tracking ID
+        </button>
+
+        {successMessage && (
+          <p className="text-green-700 font-semibold mb-3">{successMessage}</p>
+        )}
+
+        <p className="text-sm text-gray-500">
+          You will receive one final confirmation email after payment is
+          completed.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={onSubmitAnother}
+        className="w-full mt-4 bg-gray-100 font-bold py-4 rounded-xl"
+      >
+        Submit Another Request
+      </button>
     </div>
   )
 }
