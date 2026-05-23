@@ -19,6 +19,41 @@ const COUNTRY_CODES = [
   { name: "UAE", code: "+971" },
 ]
 
+function onlyDigits(value) {
+  return value.replace(/\D/g, "")
+}
+
+function formatPhoneNumber(countryCode, value) {
+  const digits = onlyDigits(value)
+
+  if (countryCode === "+66") {
+    if (digits.length <= 3) return digits
+    if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`
+    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 10)}`
+  }
+
+  if (countryCode === "+1") {
+    if (digits.length <= 3) return digits
+    if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`
+  }
+
+  if (countryCode === "+91") {
+    if (digits.length <= 5) return digits
+    return `${digits.slice(0, 5)} ${digits.slice(5, 10)}`
+  }
+
+  if (countryCode === "+44") {
+    if (digits.length <= 4) return digits
+    if (digits.length <= 7) return `${digits.slice(0, 4)} ${digits.slice(4)}`
+    return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7, 11)}`
+  }
+
+  if (digits.length <= 3) return digits
+  if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`
+  return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 12)}`
+}
+
 export default function App() {
   const [view, setView] = useState(() => {
     return localStorage.getItem("paythai_view") || "customer"
@@ -439,6 +474,24 @@ export default function App() {
     setFormData({ ...formData, amount_thb: value.toFixed(2) })
   }
 
+  function handlePhoneChange(value) {
+    const formatted = formatPhoneNumber(formData.country_code, value)
+    setFormData({
+      ...formData,
+      customer_phone: formatted,
+    })
+  }
+
+  function handleCountryCodeChange(value) {
+    const formatted = formatPhoneNumber(value, formData.customer_phone)
+
+    setFormData({
+      ...formData,
+      country_code: value,
+      customer_phone: formatted,
+    })
+  }
+
   const filteredRequests = useMemo(() => {
     return requests.filter((r) => {
       const value = `
@@ -838,10 +891,7 @@ export default function App() {
                         <select
                           value={formData.country_code}
                           onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              country_code: e.target.value,
-                            })
+                            handleCountryCodeChange(e.target.value)
                           }
                           className="border rounded-xl p-4"
                         >
@@ -857,15 +907,16 @@ export default function App() {
 
                         <input
                           type="tel"
-                          inputMode="tel"
-                          placeholder="Phone / WhatsApp"
-                          value={formData.customer_phone}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              customer_phone: e.target.value,
-                            })
+                          inputMode="numeric"
+                          placeholder={
+                            formData.country_code === "+66"
+                              ? "081 234 5678"
+                              : formData.country_code === "+1"
+                              ? "(555) 555-5555"
+                              : "Phone / WhatsApp"
                           }
+                          value={formData.customer_phone}
+                          onChange={(e) => handlePhoneChange(e.target.value)}
                           className="w-full border rounded-xl p-4"
                           required
                         />
