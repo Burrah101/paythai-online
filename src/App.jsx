@@ -1083,60 +1083,21 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-              <button
-                onClick={() => setActiveFilter("all")}
-                className={`rounded-2xl p-3 font-bold transition ${
-                  activeFilter === "all"
-                    ? "bg-sky-500 text-white"
-                    : "bg-gray-100"
-                }`}
-              >
-                All
-              </button>
-
-              <button
-                onClick={() => setActiveFilter("pending")}
-                className={`rounded-2xl p-3 font-bold transition ${
-                  activeFilter === "pending"
-                    ? "bg-sky-500 text-white"
-                    : "bg-gray-100"
-                }`}
-              >
-                Pending
-              </button>
-
-              <button
-                onClick={() => setActiveFilter("processing")}
-                className={`rounded-2xl p-3 font-bold transition ${
-                  activeFilter === "processing"
-                    ? "bg-sky-500 text-white"
-                    : "bg-gray-100"
-                }`}
-              >
-                Processing
-              </button>
-
-              <button
-                onClick={() => setActiveFilter("paid")}
-                className={`rounded-2xl p-3 font-bold transition ${
-                  activeFilter === "paid"
-                    ? "bg-sky-500 text-white"
-                    : "bg-gray-100"
-                }`}
-              >
-                Paid
-              </button>
-
-              <button
-                onClick={() => setActiveFilter("failed")}
-                className={`rounded-2xl p-3 font-bold transition ${
-                  activeFilter === "failed"
-                    ? "bg-sky-500 text-white"
-                    : "bg-gray-100"
-                }`}
-              >
-                Failed
-              </button>
+              {["all", "pending", "processing", "paid", "failed"].map(
+                (filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setActiveFilter(filter)}
+                    className={`rounded-2xl p-3 font-bold capitalize transition ${
+                      activeFilter === filter
+                        ? "bg-sky-500 text-white"
+                        : "bg-gray-100"
+                    }`}
+                  >
+                    {filter}
+                  </button>
+                )
+              )}
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
@@ -1161,6 +1122,87 @@ export default function App() {
                 const isFailed = request.status === "failed"
                 const isLocked = isPaid || isFailed
                 const hasReceipt = !!request.receipt_url
+
+                if (isPaid) {
+                  return (
+                    <div
+                      key={request.id}
+                      className="border rounded-3xl p-5 md:p-6 bg-slate-50"
+                    >
+                      <div className="flex justify-between items-start gap-4">
+                        <div>
+                          <p className="text-xl md:text-2xl font-bold">
+                            {request.customer_name}
+                          </p>
+
+                          <p className="text-gray-600">
+                            {request.customer_email}
+                          </p>
+
+                          <p className="text-gray-600">
+                            {request.customer_phone}
+                          </p>
+
+                          <p className="mt-3 text-xl font-bold">
+                            ฿{Number(request.amount_thb || 0).toFixed(2)} —{" "}
+                            {request.payment_method}
+                          </p>
+
+                          <p className="mt-2">
+                            <span className="font-bold">Tracking ID:</span>{" "}
+                            {request.tracking_id || "Not assigned"}
+                          </p>
+
+                          {request.paid_at && (
+                            <p className="text-green-600 mt-2 font-semibold">
+                              Paid locked ✓{" "}
+                              {new Date(request.paid_at).toLocaleString()}
+                            </p>
+                          )}
+
+                          {request.email_sent_at && (
+                            <p className="text-blue-600 mt-1 font-semibold">
+                              Final email sent ✓{" "}
+                              {new Date(request.email_sent_at).toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+
+                        <StatusBadge status={request.status} />
+                      </div>
+
+                      <div className="flex gap-3 mt-5 flex-wrap">
+                        {request.qr_image_url && (
+                          <button
+                            onClick={() =>
+                              setPreview({
+                                title: "QR / Invoice",
+                                url: request.qr_image_url,
+                              })
+                            }
+                            className="bg-sky-500 hover:bg-sky-600 text-white px-5 py-3 rounded-xl font-bold"
+                          >
+                            View QR / Invoice
+                          </button>
+                        )}
+
+                        {hasReceipt && (
+                          <button
+                            onClick={() =>
+                              setPreview({
+                                title: "Receipt",
+                                url: request.receipt_url,
+                              })
+                            }
+                            className="bg-green-500 text-white px-5 py-3 rounded-xl font-bold"
+                          >
+                            View Receipt
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                }
 
                 return (
                   <div
@@ -1201,19 +1243,6 @@ export default function App() {
                             ? new Date(request.created_at).toLocaleString()
                             : "No timestamp"}
                         </p>
-
-                        {request.paid_at && (
-                          <p className="text-green-600 mt-1 font-semibold">
-                            Paid: {new Date(request.paid_at).toLocaleString()}
-                          </p>
-                        )}
-
-                        {request.email_sent_at && (
-                          <p className="text-blue-600 mt-1 font-semibold">
-                            Email sent:{" "}
-                            {new Date(request.email_sent_at).toLocaleString()}
-                          </p>
-                        )}
                       </div>
 
                       <StatusBadge status={request.status} />
@@ -1293,7 +1322,7 @@ export default function App() {
                             : "bg-green-500 hover:bg-green-600"
                         }`}
                       >
-                        {isPaid ? "✓ Paid" : "Paid"}
+                        Paid
                       </button>
 
                       <button
