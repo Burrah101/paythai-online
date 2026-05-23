@@ -1189,7 +1189,15 @@ async function updateOperatorNote(requestId, note) {
                           )}
                         </div>
 
-                        <StatusBadge status={request.status} />
+                        <div className="flex flex-col items-end gap-2">
+  <StatusBadge status={request.status} />
+
+  <p className="text-sm font-semibold text-gray-500">
+    {request.status === "processing"
+      ? `Processing • ${getTimeAgo(request.processing_at || request.created_at)}`
+      : `Pending • ${getTimeAgo(request.created_at)}`}
+  </p>
+</div>
                       </div>
 
                       <div className="flex gap-3 mt-5 flex-wrap">
@@ -1531,7 +1539,31 @@ function Stat({ label, value }) {
     </div>
   )
 }
+function getTimeAgo(dateString) {
+  if (!dateString) return ""
 
+  const now = new Date()
+  const date = new Date(dateString)
+
+  const diffMs = now - date
+  const diffMin = Math.floor(diffMs / 60000)
+
+  if (diffMin < 1) return "Just now"
+
+  if (diffMin < 60) {
+    return `${diffMin} min`
+  }
+
+  const hours = Math.floor(diffMin / 60)
+
+  if (hours < 24) {
+    return `${hours} hr`
+  }
+
+  const days = Math.floor(hours / 24)
+
+  return `${days} day`
+}
 function StatusBadge({ status }) {
   return (
     <div
