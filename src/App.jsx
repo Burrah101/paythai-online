@@ -270,10 +270,39 @@ export default function App() {
     setLoading(false)
   }
 
+  async function sendPaidEmail(request) {
+    const response = await fetch("/api/send-paid-email", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        customerEmail: request.customer_email,
+        trackingId: request.tracking_id,
+        amount: Number(request.amount_thb || 0).toFixed(2),
+        receiptUrl: request.receipt_url,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData?.error || "Email send failed")
+    }
+
+    return response.json()
+  }
+
   async function updateStatus(request, status) {
     const updatePayload = { status }
 
-    if (status === "paid") updatePayload.paid_at = new Date().toISOString()
+    if (status === "paid") {
+      if (!request.receipt_url) {
+        alert("Upload receipt before marking Paid.")
+        return
+      }
+
+      updatePayload.paid_at = new Date().toISOString()
+    }
 
     const { error } = await supabase
       .from("payment_requests")
@@ -284,6 +313,22 @@ export default function App() {
       console.error(error)
       alert("Status update failed")
       return
+    }
+
+    if (status === "paid" && !request.email_sent_at) {
+      try {
+        await sendPaidEmail(request)
+
+        await supabase
+          .from("payment_requests")
+          .update({
+            email_sent_at: new Date().toISOString(),
+          })
+          .eq("id", request.id)
+      } catch (emailError) {
+        console.error("Email send failed:", emailError)
+        alert("Marked paid, but email did not send. Check Vercel/API settings.")
+      }
     }
 
     fetchRequests()
