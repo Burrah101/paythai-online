@@ -110,7 +110,7 @@ export default function App() {
   const [activeFilter, setActiveFilter] = useState("all")
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState(null)
-  const [copiedId, setCopiedId] = useState("")
+  const [noteSavedId, setNoteSavedId] = useState(null)
 
   const [trackingSearch, setTrackingSearch] = useState(() => {
     return localStorage.getItem("paythai_tracking") || ""
@@ -228,15 +228,26 @@ export default function App() {
 
     try {
       await navigator.clipboard.writeText(trackingId)
-      setCopiedId(trackingId)
-
-      setTimeout(() => {
-        setCopiedId("")
-      }, 1500)
     } catch (error) {
       console.error(error)
       alert("Could not copy tracking ID")
     }
+  }
+
+  function openCustomerTracking(request) {
+    if (!request?.tracking_id) return
+
+    localStorage.setItem("paythai_tracking", request.tracking_id)
+    setTrackingSearch(request.tracking_id)
+    setTrackingResult(request)
+    setTrackingMessage("")
+    setCustomerStep(5)
+    setView("customer")
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    })
   }
 
   async function uploadQrImage(file) {
@@ -435,6 +446,12 @@ export default function App() {
       return
     }
 
+    setNoteSavedId(requestId)
+
+    setTimeout(() => {
+      setNoteSavedId(null)
+    }, 1500)
+
     fetchRequests()
   }
 
@@ -606,12 +623,16 @@ export default function App() {
       0
     )
 
+    const avgTicket =
+      todayRequests.length > 0 ? todayVolume / todayRequests.length : 0
+
     return {
       count: todayRequests.length,
       volume: todayVolume,
       pendingVolume: sumByStatus("pending"),
       processingVolume: sumByStatus("processing"),
       paidVolume: sumByStatus("paid"),
+      avgTicket,
     }
   }, [requests])
 
@@ -1170,8 +1191,17 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="bg-green-500 text-white px-4 py-2 rounded-full font-bold w-fit">
-                LIVE
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={fetchRequests}
+                  className="bg-gray-900 text-white px-4 py-2 rounded-full font-bold"
+                >
+                  ↻ Refresh
+                </button>
+
+                <div className="bg-green-500 text-white px-4 py-2 rounded-full font-bold w-fit">
+                  LIVE
+                </div>
               </div>
             </div>
 
@@ -1201,9 +1231,10 @@ export default function App() {
               <Stat label="Failed" value={counts.failed} />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
               <Stat label="Today Requests" value={todayMetrics.count} />
               <Stat label="Today Volume" value={formatTHB(todayMetrics.volume)} />
+              <Stat label="Avg Ticket" value={formatTHB(todayMetrics.avgTicket)} />
               <Stat
                 label="Pending THB"
                 value={formatTHB(todayMetrics.pendingVolume)}
@@ -1260,8 +1291,8 @@ export default function App() {
 
                           <TrackingLine
                             trackingId={request.tracking_id}
-                            copiedId={copiedId}
                             onCopy={copyTrackingId}
+                            onOpen={() => openCustomerTracking(request)}
                           />
 
                           {request.paid_at && (
@@ -1341,8 +1372,8 @@ export default function App() {
 
                         <TrackingLine
                           trackingId={request.tracking_id}
-                          copiedId={copiedId}
                           onCopy={copyTrackingId}
+                          onOpen={() => openCustomerTracking(request)}
                         />
 
                         <p className="text-gray-500 mt-2 whitespace-pre-line">
@@ -1427,9 +1458,17 @@ export default function App() {
                     </div>
 
                     <div className="mt-4">
-                      <p className="text-sm font-semibold mb-2">
-                        Internal operator note
-                      </p>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold">
+                          Internal operator note
+                        </p>
+
+                        {noteSavedId === request.id && (
+                          <p className="text-sm font-bold text-green-600">
+                            Saved ✓
+                          </p>
+                        )}
+                      </div>
 
                       <textarea
                         defaultValue={request.operator_note || ""}
@@ -1537,7 +1576,7 @@ export default function App() {
   )
 }
 
-function TrackingLine({ trackingId, copiedId, onCopy }) {
+function TrackingLine({ trackingId, onCopy, onOpen }) {
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
       <span>
@@ -1546,13 +1585,23 @@ function TrackingLine({ trackingId, copiedId, onCopy }) {
       </span>
 
       {trackingId && (
-        <button
-          type="button"
-          onClick={() => onCopy(trackingId)}
-          className="bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg text-sm font-bold"
-        >
-          {copiedId === trackingId ? "Copied ✓" : "Copy ID"}
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => onCopy(trackingId)}
+            className="bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg text-sm font-bold"
+          >
+            Copy ID
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpen}
+            className="bg-gray-900 hover:bg-black text-white px-3 py-1 rounded-lg text-sm font-bold"
+          >
+            Open Tracking
+          </button>
+        </>
       )}
     </div>
   )
