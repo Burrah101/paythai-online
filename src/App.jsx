@@ -21,7 +21,11 @@ const COUNTRY_CODES = [
 ]
 
 function onlyDigits(value) {
-  return value.replace(/\D/g, "")
+  return String(value || "").replace(/\D/g, "")
+}
+
+function cleanTrackingId(value) {
+  return String(value || "").trim().toUpperCase()
 }
 
 function formatPhoneNumber(countryCode, value) {
@@ -55,13 +59,18 @@ function formatPhoneNumber(countryCode, value) {
   return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 12)}`
 }
 
+function formatTHB(value) {
+  return `฿${Number(value || 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
 function getTimeAgo(dateString) {
   if (!dateString) return ""
-
   const now = new Date()
   const date = new Date(dateString)
-  const diffMs = now - date
-  const diffMin = Math.floor(diffMs / 60000)
+  const diffMin = Math.floor((now - date) / 60000)
 
   if (diffMin < 1) return "Just now"
   if (diffMin < 60) return `${diffMin} min`
@@ -71,13 +80,6 @@ function getTimeAgo(dateString) {
 
   const days = Math.floor(hours / 24)
   return `${days} day`
-}
-
-function formatTHB(value) {
-  return `฿${Number(value || 0).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
 }
 
 function isToday(dateString) {
@@ -111,10 +113,6 @@ function sortRequestsForOps(list) {
   })
 }
 
-function cleanTrackingId(value) {
-  return String(value || "").trim().toUpperCase()
-}
-
 export default function App() {
   const [view, setView] = useState(() => {
     return localStorage.getItem("paythai_view") || "customer"
@@ -142,6 +140,7 @@ export default function App() {
   const [trackingSearch, setTrackingSearch] = useState(() => {
     return localStorage.getItem("paythai_tracking") || ""
   })
+
   const [trackingResult, setTrackingResult] = useState(null)
   const [trackingMessage, setTrackingMessage] = useState("")
 
@@ -209,7 +208,6 @@ export default function App() {
 
     return () => {
       clearTimeout(lockTimer)
-
       events.forEach((eventName) => {
         window.removeEventListener(eventName, resetTimer)
       })
@@ -326,10 +324,11 @@ export default function App() {
     setCustomerStep(5)
     setView("customer")
 
-    const newUrl = `${window.location.pathname}?track=${encodeURIComponent(
-      trackingId
-    )}`
-    window.history.pushState({}, "", newUrl)
+    window.history.pushState(
+      {},
+      "",
+      `${window.location.pathname}?track=${encodeURIComponent(trackingId)}`
+    )
 
     window.scrollTo({
       top: 0,
@@ -425,10 +424,11 @@ export default function App() {
       setSuccessMessage(`Request received. Tracking ID: ${trackingId}`)
       setCustomerStep(5)
 
-      const newUrl = `${window.location.pathname}?track=${encodeURIComponent(
-        trackingId
-      )}`
-      window.history.pushState({}, "", newUrl)
+      window.history.pushState(
+        {},
+        "",
+        `${window.location.pathname}?track=${encodeURIComponent(trackingId)}`
+      )
 
       setFormData({
         customer_name: "",
@@ -622,10 +622,11 @@ export default function App() {
     localStorage.setItem("paythai_tracking", cleaned)
     setTrackingSearch(cleaned)
 
-    const newUrl = `${window.location.pathname}?track=${encodeURIComponent(
-      cleaned
-    )}`
-    window.history.pushState({}, "", newUrl)
+    window.history.pushState(
+      {},
+      "",
+      `${window.location.pathname}?track=${encodeURIComponent(cleaned)}`
+    )
 
     const { data, error } = await supabase
       .from("payment_requests")
@@ -672,7 +673,9 @@ export default function App() {
 
       setOperatorFailedAttempts(attempts)
       setOperatorBlockedUntil(Date.now() + delayMs)
-      setOperatorError(`Wrong operator PIN. Wait ${Math.ceil(delayMs / 1000)} seconds.`)
+      setOperatorError(
+        `Wrong operator PIN. Wait ${Math.ceil(delayMs / 1000)} seconds.`
+      )
 
       setTimeout(() => {
         setOperatorBlockedUntil(0)
@@ -689,16 +692,20 @@ export default function App() {
 
   function formatAmountOnBlur() {
     if (!formData.amount_thb) return
+
     const value = Number(formData.amount_thb)
+
     if (Number.isNaN(value) || value <= 0) {
       setFormData({ ...formData, amount_thb: "" })
       return
     }
+
     setFormData({ ...formData, amount_thb: value.toFixed(2) })
   }
 
   function handlePhoneChange(value) {
     const formatted = formatPhoneNumber(formData.country_code, value)
+
     setFormData({
       ...formData,
       customer_phone: formatted,
@@ -746,7 +753,9 @@ export default function App() {
   }
 
   const todayMetrics = useMemo(() => {
-    const todayRequests = requests.filter((request) => isToday(request.created_at))
+    const todayRequests = requests.filter((request) =>
+      isToday(request.created_at)
+    )
 
     const sumByStatus = (status) =>
       todayRequests
@@ -827,21 +836,23 @@ export default function App() {
               </div>
 
               <h2 className="text-4xl md:text-5xl font-bold leading-tight mb-6">
-                Pay Thai QR bills with
-local payment support.
+                Pay Thai QR bills with local payment support.
               </h2>
 
               <p className="text-gray-600 mb-6">
-                PayThai helps visitors securely complete Thai QR and local invoice payments with tracking and confirmation updates.
+                PayThai helps visitors securely complete Thai QR and local
+                invoice payments with tracking and confirmation updates.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
                   Tourist-friendly payments
                 </div>
+
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
                   Upload QR or invoice
                 </div>
+
                 <div className="bg-gray-100 rounded-2xl p-4 font-semibold">
                   Receipt tracking
                 </div>
@@ -852,31 +863,31 @@ local payment support.
                   Thai QR payment support
                 </h3>
 
-                <p className="text-gray-600 mb-3">
-                  <p className="text-gray-700 leading-relaxed">
-  Upload your Thai QR or invoice, submit payment details,
-  and receive confirmation updates while PayThai handles the rest.
-</p>
-                </p>
+                <div className="text-gray-700 leading-relaxed">
+                  Upload your Thai QR or invoice, submit payment details, and
+                  receive confirmation updates while PayThai handles the rest.
+                </div>
 
-                <p className="text-gray-600 mb-3">
+                <div className="text-gray-600 mt-4">
                   Fee notice: PayThai service fees are shown or confirmed before
                   processing. Exact fees may depend on payment method, amount,
                   and service type.
-                </p>
+                </div>
 
-                <p className="text-xs text-gray-500 mt-4 leading-relaxed">
+                <div className="text-xs text-gray-500 mt-4 leading-relaxed">
                   Secure manual payment coordination with receipt confirmation
                   and tracking.
-                </p>
+                </div>
               </div>
 
               <div className="mt-5 bg-slate-50 rounded-3xl p-5">
                 <h3 className="font-bold text-lg mb-2">Support</h3>
+
                 <p className="text-gray-600">
                   For help with a payment request, use your Tracking ID and
                   contact:
                 </p>
+
                 <p className="font-bold mt-2">support@paythai.online</p>
               </div>
 
@@ -893,7 +904,10 @@ local payment support.
             </div>
 
             <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm">
-              <h2 className="text-3xl font-bold mb-2">Submit Payment Request</h2>
+              <h2 className="text-3xl font-bold mb-2">
+                Submit Payment Request
+              </h2>
+
               <p className="text-gray-500 mb-6">
                 Four simple steps. Upload the Thai QR first.
               </p>
@@ -904,19 +918,25 @@ local payment support.
                 {customerStep === 1 && (
                   <div>
                     <StepTitle
-  number="1"
-  title="Take Photo"
-  description="Take a photo or upload a Thai QR, invoice, or condo bill. Most requests are confirmed within minutes."
-/>
+                      number="1"
+                      title="Take Photo"
+                      description="Take a photo or upload a Thai QR, invoice, or condo bill. Most requests are confirmed within minutes."
+                    />
 
-                    <label className="block bg-sky-500 hover:bg-sky-600 text-white rounded-3xl p-8 text-center font-bold text-2xl cursor-pointer shadow-sm">
-                      📷 Take Photo / Upload QR
+                    <label className="block bg-sky-500 hover:bg-sky-600 text-white rounded-3xl p-8 text-center font-bold text-2xl cursor-pointer transition">
+                      📷 Upload QR or Invoice
+
+                      <p className="text-sm text-sky-100 mt-3 text-center">
+                        Secure tracking • Receipt confirmation • Email updates
+                      </p>
+
                       <input
                         type="file"
                         accept="image/*,.pdf"
                         capture="environment"
                         onChange={(e) => {
                           const file = e.target.files[0]
+
                           if (file) {
                             setQrFile(file)
                             setCustomerStep(2)
@@ -951,6 +971,7 @@ local payment support.
                       className="w-full border-2 border-sky-500 bg-sky-50 rounded-3xl p-6 text-left"
                     >
                       <div className="text-2xl font-bold">💳 Card</div>
+
                       <p className="text-gray-600 mt-2">
                         PayThai will coordinate your card payment securely.
                       </p>
@@ -971,10 +992,12 @@ local payment support.
                         <label className="font-semibold text-sm mb-2 block">
                           Amount in THB
                         </label>
+
                         <div className="flex items-center border rounded-xl overflow-hidden">
                           <span className="bg-gray-100 px-4 py-4 font-bold">
                             ฿
                           </span>
+
                           <input
                             type="number"
                             step="0.01"
@@ -1011,6 +1034,7 @@ local payment support.
                             }
                             title="🏢 Condo / Rent / Utility"
                           />
+
                           <ReasonButton
                             active={formData.reason_type === "government"}
                             onClick={() =>
@@ -1021,6 +1045,7 @@ local payment support.
                             }
                             title="🏛 Fine / Ticket / Government"
                           />
+
                           <ReasonButton
                             active={formData.reason_type === "service"}
                             onClick={() =>
@@ -1213,16 +1238,20 @@ local payment support.
                         <strong>QR / Invoice:</strong>{" "}
                         {qrFile ? qrFile.name : "No file selected"}
                       </p>
+
                       <p>
                         <strong>Method:</strong> {formData.payment_method}
                       </p>
+
                       <p>
                         <strong>Amount:</strong> {formatTHB(formData.amount_thb)}
                       </p>
+
                       <p>
                         <strong>Phone:</strong> {formData.country_code}{" "}
                         {formData.customer_phone}
                       </p>
+
                       <p>
                         <strong>Email:</strong> {formData.customer_email}
                       </p>
@@ -1272,6 +1301,7 @@ local payment support.
         {view === "operator" && !operatorUnlocked && (
           <div className="bg-white rounded-3xl p-8 shadow-sm max-w-md mx-auto">
             <h2 className="text-3xl font-bold mb-2">Operator Login</h2>
+
             <p className="text-gray-500 mb-6">
               Enter operator PIN to access dashboard. This session locks on
               refresh, browser close, or inactivity.
@@ -1595,7 +1625,7 @@ local payment support.
 
                       <textarea
                         defaultValue={request.operator_note || ""}
-                        placeholder="Internal notes (customer contacted, waiting confirmation, etc)"
+                        placeholder="Internal notes"
                         className="w-full border rounded-2xl p-3 text-sm"
                         rows={3}
                         onBlur={(e) =>
@@ -1620,7 +1650,9 @@ local payment support.
                       </button>
 
                       <button
-                        disabled={isLocked || !hasReceipt || paidActionId === request.id}
+                        disabled={
+                          isLocked || !hasReceipt || paidActionId === request.id
+                        }
                         onClick={() => updateStatus(request, "paid")}
                         className={`px-5 py-3 rounded-xl font-bold text-white ${
                           isLocked || !hasReceipt || paidActionId === request.id
@@ -1706,6 +1738,7 @@ function PublicTrackingPanel({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <div>
           <h3 className="text-2xl font-bold">Track Payment</h3>
+
           <p className="text-gray-500">
             Enter your Tracking ID to view your live request status.
           </p>
@@ -1775,6 +1808,7 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
           <p className="text-sm text-gray-500 font-semibold">Tracking ID</p>
+
           <p className="text-3xl font-bold">{trackingResult.tracking_id}</p>
 
           <p className="text-gray-600 mt-2">
@@ -1797,6 +1831,7 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
         {isPending && (
           <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
             <p className="font-bold text-blue-700">Request received</p>
+
             <p className="text-sm text-gray-600">
               Your request is waiting for operator review.
             </p>
@@ -1806,6 +1841,7 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
         {isProcessing && (
           <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
             <p className="font-bold text-orange-700">Processing now</p>
+
             <p className="text-sm text-gray-600">
               Your request is being handled. Receipt confirmation will appear
               here once available.
@@ -1816,6 +1852,7 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
         {isPaid && (
           <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
             <p className="font-bold text-green-700">Payment completed</p>
+
             <p className="text-sm text-gray-600">
               Your receipt is ready. A final confirmation email has been sent or
               will arrive shortly.
@@ -1826,6 +1863,7 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
         {isFailed && (
           <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
             <p className="font-bold text-red-700">Request needs attention</p>
+
             <p className="text-sm text-gray-600">
               Please contact support with your Tracking ID.
             </p>
@@ -1850,7 +1888,9 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
       <div className="mt-5 border-t pt-4">
         <p className="text-sm text-gray-500">
           Need help? Email{" "}
-          <span className="font-bold text-gray-700">support@paythai.online</span>{" "}
+          <span className="font-bold text-gray-700">
+            support@paythai.online
+          </span>{" "}
           with your Tracking ID.
         </p>
       </div>
@@ -1949,6 +1989,7 @@ function SuccessPanel({
 
         <div className="bg-white rounded-2xl p-5 border mb-5">
           <p className="text-sm text-gray-500 font-semibold">Tracking ID</p>
+
           <p className="text-3xl font-bold tracking-wide">
             {trackingSearch || "Not assigned"}
           </p>
@@ -2045,8 +2086,10 @@ function StepTitle({ number, title, description }) {
         <div className="w-10 h-10 bg-sky-500 text-white rounded-full flex items-center justify-center font-bold">
           {number}
         </div>
+
         <h3 className="text-2xl font-bold">{title}</h3>
       </div>
+
       <p className="text-gray-500 mt-2">{description}</p>
     </div>
   )
@@ -2065,12 +2108,6 @@ function ReasonButton({ active, onClick, title }) {
     >
       {title}
     </button>
-  )
-}
-
-function TrackingCard({ trackingResult, setPreview }) {
-  return (
-    <TrackingStatusPage trackingResult={trackingResult} setPreview={setPreview} />
   )
 }
 
