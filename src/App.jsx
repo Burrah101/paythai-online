@@ -1390,7 +1390,15 @@ export default function App() {
 
                       <button
                         disabled={isLocked || !hasReceipt}
-                        onClick={() => updateStatus(request, "paid")}
+                        onClick={() => {
+  const confirmed = window.confirm(
+    "Mark this request as PAID and send the final customer email?"
+  )
+
+  if (!confirmed) return
+
+  updateStatus(request, "paid")
+}}
                         className={`px-5 py-3 rounded-xl font-bold text-white ${
                           isLocked || !hasReceipt
                             ? "bg-gray-300 cursor-not-allowed"
