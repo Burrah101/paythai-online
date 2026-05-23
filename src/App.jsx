@@ -72,6 +72,23 @@ function getTimeAgo(dateString) {
   return `${days} day`
 }
 
+function formatTHB(value) {
+  return `฿${Number(value || 0).toFixed(2)}`
+}
+
+function isToday(dateString) {
+  if (!dateString) return false
+
+  const date = new Date(dateString)
+  const today = new Date()
+
+  return (
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+  )
+}
+
 export default function App() {
   const [view, setView] = useState(() => {
     return localStorage.getItem("paythai_view") || "customer"
@@ -93,6 +110,7 @@ export default function App() {
   const [activeFilter, setActiveFilter] = useState("all")
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [copiedId, setCopiedId] = useState("")
 
   const [trackingSearch, setTrackingSearch] = useState(() => {
     return localStorage.getItem("paythai_tracking") || ""
@@ -205,6 +223,22 @@ export default function App() {
     }
   }, [trackingSearch])
 
+  async function copyTrackingId(trackingId) {
+    if (!trackingId) return
+
+    try {
+      await navigator.clipboard.writeText(trackingId)
+      setCopiedId(trackingId)
+
+      setTimeout(() => {
+        setCopiedId("")
+      }, 1500)
+    } catch (error) {
+      console.error(error)
+      alert("Could not copy tracking ID")
+    }
+  }
+
   async function uploadQrImage(file) {
     if (!file) return null
 
@@ -222,9 +256,7 @@ export default function App() {
       return null
     }
 
-    const { data } = supabase.storage
-      .from("payment-files")
-      .getPublicUrl(fileName)
+    const { data } = supabase.storage.from("payment-files").getPublicUrl(fileName)
 
     return data.publicUrl
   }
@@ -268,8 +300,7 @@ export default function App() {
         qrUrl = await uploadQrImage(qrFile)
       }
 
-      const trackingId =
-        "PT-" + Math.floor(100000 + Math.random() * 900000)
+      const trackingId = "PT-" + Math.floor(100000 + Math.random() * 900000)
 
       const { error } = await supabase.from("payment_requests").insert([
         {
@@ -561,6 +592,28 @@ export default function App() {
     paid: requests.filter((r) => r.status === "paid").length,
     failed: requests.filter((r) => r.status === "failed").length,
   }
+
+  const todayMetrics = useMemo(() => {
+    const todayRequests = requests.filter((request) => isToday(request.created_at))
+
+    const sumByStatus = (status) =>
+      todayRequests
+        .filter((request) => request.status === status)
+        .reduce((total, request) => total + Number(request.amount_thb || 0), 0)
+
+    const todayVolume = todayRequests.reduce(
+      (total, request) => total + Number(request.amount_thb || 0),
+      0
+    )
+
+    return {
+      count: todayRequests.length,
+      volume: todayVolume,
+      pendingVolume: sumByStatus("pending"),
+      processingVolume: sumByStatus("processing"),
+      paidVolume: sumByStatus("paid"),
+    }
+  }, [requests])
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-6">
@@ -1148,6 +1201,20 @@ export default function App() {
               <Stat label="Failed" value={counts.failed} />
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+              <Stat label="Today Requests" value={todayMetrics.count} />
+              <Stat label="Today Volume" value={formatTHB(todayMetrics.volume)} />
+              <Stat
+                label="Pending THB"
+                value={formatTHB(todayMetrics.pendingVolume)}
+              />
+              <Stat
+                label="Processing THB"
+                value={formatTHB(todayMetrics.processingVolume)}
+              />
+              <Stat label="Paid THB" value={formatTHB(todayMetrics.paidVolume)} />
+            </div>
+
             <input
               type="text"
               placeholder="Search name, email, phone, amount, or tracking ID"
@@ -1187,14 +1254,15 @@ export default function App() {
                           </p>
 
                           <p className="mt-3 text-xl font-bold">
-                            ฿{Number(request.amount_thb || 0).toFixed(2)} —{" "}
+                            {formatTHB(request.amount_thb)} —{" "}
                             {request.payment_method}
                           </p>
 
-                          <p className="mt-2">
-                            <span className="font-bold">Tracking ID:</span>{" "}
-                            {request.tracking_id || "Not assigned"}
-                          </p>
+                          <TrackingLine
+                            trackingId={request.tracking_id}
+                            copiedId={copiedId}
+                            onCopy={copyTrackingId}
+                          />
 
                           {request.paid_at && (
                             <p className="text-green-600 mt-2 font-semibold">
@@ -1267,14 +1335,15 @@ export default function App() {
                         </p>
 
                         <p className="mt-3 text-xl font-bold">
-                          ฿{Number(request.amount_thb || 0).toFixed(2)} —{" "}
+                          {formatTHB(request.amount_thb)} —{" "}
                           {request.payment_method}
                         </p>
 
-                        <p className="mt-2">
-                          <span className="font-bold">Tracking ID:</span>{" "}
-                          {request.tracking_id || "Not assigned"}
-                        </p>
+                        <TrackingLine
+                          trackingId={request.tracking_id}
+                          copiedId={copiedId}
+                          onCopy={copyTrackingId}
+                        />
 
                         <p className="text-gray-500 mt-2 whitespace-pre-line">
                           {request.invoice_note}
@@ -1391,14 +1460,14 @@ export default function App() {
                       <button
                         disabled={isLocked || !hasReceipt}
                         onClick={() => {
-  const confirmed = window.confirm(
-    "Mark this request as PAID and send the final customer email?"
-  )
+                          const confirmed = window.confirm(
+                            "Mark this request as PAID and send the final customer email?"
+                          )
 
-  if (!confirmed) return
+                          if (!confirmed) return
 
-  updateStatus(request, "paid")
-}}
+                          updateStatus(request, "paid")
+                        }}
                         className={`px-5 py-3 rounded-xl font-bold text-white ${
                           isLocked || !hasReceipt
                             ? "bg-gray-300 cursor-not-allowed"
@@ -1468,6 +1537,27 @@ export default function App() {
   )
 }
 
+function TrackingLine({ trackingId, copiedId, onCopy }) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <span>
+        <span className="font-bold">Tracking ID:</span>{" "}
+        {trackingId || "Not assigned"}
+      </span>
+
+      {trackingId && (
+        <button
+          type="button"
+          onClick={() => onCopy(trackingId)}
+          className="bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg text-sm font-bold"
+        >
+          {copiedId === trackingId ? "Copied ✓" : "Copy ID"}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function StepProgress({ step }) {
   const steps = ["Photo", "Card", "Info", "Send"]
 
@@ -1531,7 +1621,7 @@ function TrackingCard({ trackingResult, setPreview }) {
             Tracking ID: {trackingResult.tracking_id}
           </p>
           <p className="text-gray-600">
-            Amount: ฿{Number(trackingResult.amount_thb || 0).toFixed(2)}
+            Amount: {formatTHB(trackingResult.amount_thb)}
           </p>
           <p className="text-gray-600">
             Method: {trackingResult.payment_method}
@@ -1569,7 +1659,7 @@ function Stat({ label, value }) {
   return (
     <div className="bg-gray-100 rounded-2xl p-4 text-center">
       <p className="text-sm">{label}</p>
-      <p className="text-3xl font-bold">{value}</p>
+      <p className="text-2xl md:text-3xl font-bold">{value}</p>
     </div>
   )
 }
