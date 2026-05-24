@@ -2212,9 +2212,9 @@ function PaymentPreviewCard({ formData, qrFile }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
         <div className="bg-white rounded-2xl p-4 border">
-          <p className="text-gray-500">Recipient</p>
+          <p className="text-gray-500">Recipient status</p>
           <p className="font-bold">{recipientPreview}</p>
-          <p className="text-xs text-gray-400 mt-1">Verified during processing</p>
+          <p className="text-xs text-gray-400 mt-1">Verified before completion</p>
         </div>
 
         <div className="bg-white rounded-2xl p-4 border">
