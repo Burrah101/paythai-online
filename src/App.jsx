@@ -1107,6 +1107,49 @@ export default function App() {
                 copiedId={copiedId}
                 copyTrackingId={copyTrackingId}
               />
+              <div className="mt-6 text-center text-sm text-gray-500">
+  <div className="flex items-center justify-center gap-4 flex-wrap">
+    <button
+      type="button"
+      onClick={() =>
+        alert(
+          "PayThai Terms:\n\nManual review may be required during processing.\nService availability may vary."
+        )
+      }
+      className="hover:text-sky-600"
+    >
+      Terms
+    </button>
+
+    <span>•</span>
+
+    <button
+      type="button"
+      onClick={() =>
+        alert(
+          "PayThai Privacy:\n\nCustomer information is used only for payment coordination and support."
+        )
+      }
+      className="hover:text-sky-600"
+    >
+      Privacy
+    </button>
+
+    <span>•</span>
+
+    <button
+      type="button"
+      onClick={() => alert("Contact:\n\nsupport@paythai.online")}
+      className="hover:text-sky-600"
+    >
+      Contact
+    </button>
+  </div>
+
+  <p className="mt-3 text-xs text-gray-400">
+    Manual review may be required during processing.
+  </p>
+</div>
             </div>
 
             <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm">
@@ -2212,9 +2255,9 @@ function PaymentPreviewCard({ formData, qrFile }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
         <div className="bg-white rounded-2xl p-4 border">
-          <p className="text-gray-500">Recipient status</p>
+          <p className="text-gray-500">Recipient</p>
           <p className="font-bold">{recipientPreview}</p>
-          <p className="text-xs text-gray-400 mt-1">Verified before completion</p>
+          <p className="text-xs text-gray-400 mt-1">Verified during processing</p>
         </div>
 
         <div className="bg-white rounded-2xl p-4 border">
@@ -2463,6 +2506,7 @@ function StatusBadge({ status }) {
       }`}
     >
       {label}
+    
     </div>
   )
 }
