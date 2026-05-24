@@ -95,6 +95,11 @@ function isToday(dateString) {
   )
 }
 
+function formatDateTime(dateString) {
+  if (!dateString) return "—"
+  return new Date(dateString).toLocaleString()
+}
+
 function sortRequestsForOps(list) {
   return [...list].sort((a, b) => {
     const statusRank = {
@@ -136,6 +141,9 @@ export default function App() {
   const [noteSavedId, setNoteSavedId] = useState(null)
   const [copiedId, setCopiedId] = useState("")
   const [paidActionId, setPaidActionId] = useState(null)
+  const [statusActionId, setStatusActionId] = useState(null)
+  const [uploadingReceiptId, setUploadingReceiptId] = useState(null)
+  const [operatorActionMessage, setOperatorActionMessage] = useState("")
 
   const [trackingSearch, setTrackingSearch] = useState(() => {
     return localStorage.getItem("paythai_tracking") || ""
@@ -213,6 +221,16 @@ export default function App() {
       })
     }
   }, [operatorUnlocked])
+
+  useEffect(() => {
+    if (!operatorActionMessage) return
+
+    const timer = setTimeout(() => {
+      setOperatorActionMessage("")
+    }, 3500)
+
+    return () => clearTimeout(timer)
+  }, [operatorActionMessage])
 
   async function fetchRequests() {
     const { data, error } = await supabase
@@ -451,9 +469,9 @@ export default function App() {
     } catch (err) {
       console.error(err)
       alert("Unexpected error")
+    } finally {
+      setLoading(false)
     }
-
-    setLoading(false)
   }
 
   async function sendPaidEmail(request) {
@@ -478,18 +496,74 @@ export default function App() {
     return response.json()
   }
 
+  async function getFreshRequest(requestId) {
+    const { data, error } = await supabase
+      .from("payment_requests")
+      .select("*")
+      .eq("id", requestId)
+      .maybeSingle()
+
+    if (error) {
+      console.error(error)
+      return null
+    }
+
+    return data
+  }
+
   async function updateStatus(request, status) {
+    if (!request?.id) return
+    if (statusActionId || paidActionId) return
+
+    setOperatorActionMessage("")
+
+    const freshRequest = await getFreshRequest(request.id)
+
+    if (!freshRequest) {
+      alert("Could not refresh this request. Try again.")
+      return
+    }
+
+    if (freshRequest.status === "paid" || freshRequest.status === "failed") {
+      setOperatorActionMessage("Request is already locked.")
+      fetchRequests()
+      return
+    }
+
     const updatePayload = { status }
 
     if (status === "processing") {
-      updatePayload.processing_at = new Date().toISOString()
+      if (freshRequest.status === "processing") {
+        setOperatorActionMessage("Request is already marked processing.")
+        return
+      }
+
+      setStatusActionId(request.id)
+      updatePayload.processing_at =
+        freshRequest.processing_at || new Date().toISOString()
+    }
+
+    if (status === "failed") {
+      const confirmed = window.confirm(
+        "Mark this request as FAILED and lock it from further operator actions?"
+      )
+
+      if (!confirmed) return
+
+      setStatusActionId(request.id)
     }
 
     if (status === "paid") {
-      if (paidActionId) return
-
-      if (!request.receipt_url) {
+      if (!freshRequest.receipt_url) {
         alert("Upload receipt before marking Paid.")
+        return
+      }
+
+      if (freshRequest.email_sent_at) {
+        setOperatorActionMessage(
+          "Final email was already sent. Request is already protected."
+        )
+        fetchRequests()
         return
       }
 
@@ -500,7 +574,7 @@ export default function App() {
       if (!confirmed) return
 
       setPaidActionId(request.id)
-      updatePayload.paid_at = new Date().toISOString()
+      updatePayload.paid_at = freshRequest.paid_at || new Date().toISOString()
     }
 
     try {
@@ -508,6 +582,8 @@ export default function App() {
         .from("payment_requests")
         .update(updatePayload)
         .eq("id", request.id)
+        .neq("status", "paid")
+        .neq("status", "failed")
 
       if (error) {
         console.error(error)
@@ -515,27 +591,53 @@ export default function App() {
         return
       }
 
-      if (status === "paid" && !request.email_sent_at) {
-        try {
-          await sendPaidEmail(request)
+      if (status === "paid") {
+        const emailFreshRequest = await getFreshRequest(request.id)
 
-          await supabase
+        if (!emailFreshRequest) {
+          alert("Marked paid, but could not refresh email status.")
+          return
+        }
+
+        if (emailFreshRequest.email_sent_at) {
+          setOperatorActionMessage("Email already sent. Duplicate prevented.")
+          fetchRequests()
+          return
+        }
+
+        try {
+          await sendPaidEmail(emailFreshRequest)
+
+          const { error: emailStampError } = await supabase
             .from("payment_requests")
             .update({
               email_sent_at: new Date().toISOString(),
             })
             .eq("id", request.id)
+            .is("email_sent_at", null)
+
+          if (emailStampError) {
+            console.error(emailStampError)
+            alert(
+              "Email sent, but email timestamp was not saved. Check Supabase."
+            )
+          } else {
+            setOperatorActionMessage("Paid locked and final email sent.")
+          }
         } catch (emailError) {
           console.error("Email send failed:", emailError)
           alert("Marked paid, but email did not send. Check Vercel/API settings.")
         }
+      } else if (status === "processing") {
+        setOperatorActionMessage("Request marked processing.")
+      } else if (status === "failed") {
+        setOperatorActionMessage("Request marked failed and locked.")
       }
 
       fetchRequests()
     } finally {
-      if (status === "paid") {
-        setPaidActionId(null)
-      }
+      setStatusActionId(null)
+      setPaidActionId(null)
     }
   }
 
@@ -564,46 +666,81 @@ export default function App() {
 
   async function uploadReceipt(request, file) {
     if (!file) return
-    if (request.receipt_url || request.status === "paid") return
+    if (!request?.id) return
+    if (uploadingReceiptId) return
 
-    const fileExt = file.name.split(".").pop()
-    const fileName = `receipt-${request.id}-${Date.now()}.${fileExt}`
+    setOperatorActionMessage("")
 
-    const { error: uploadError } = await supabase.storage
-      .from("payment-files")
-      .upload(fileName, file)
+    const freshRequest = await getFreshRequest(request.id)
 
-    if (uploadError) {
-      console.error(uploadError)
-      alert("Receipt upload failed")
+    if (!freshRequest) {
+      alert("Could not refresh this request. Try again.")
       return
     }
 
-    const { data } = supabase.storage
-      .from("payment-files")
-      .getPublicUrl(fileName)
-
-    const publicUrl = data.publicUrl
-
-    const { error: updateError } = await supabase
-      .from("payment_requests")
-      .update({
-        receipt_url: publicUrl,
-        status: request.status === "pending" ? "processing" : request.status,
-        processing_at:
-          request.status === "pending"
-            ? new Date().toISOString()
-            : request.processing_at,
-      })
-      .eq("id", request.id)
-
-    if (updateError) {
-      console.error(updateError)
-      alert("Receipt saved, but database update failed")
+    if (freshRequest.receipt_url || freshRequest.status === "paid") {
+      setOperatorActionMessage("Receipt is already locked.")
+      fetchRequests()
       return
     }
 
-    fetchRequests()
+    if (freshRequest.status === "failed") {
+      setOperatorActionMessage("Failed request is locked.")
+      fetchRequests()
+      return
+    }
+
+    setUploadingReceiptId(request.id)
+
+    try {
+      const fileExt = file.name.split(".").pop()
+      const fileName = `receipt-${request.id}-${Date.now()}.${fileExt}`
+
+      const { error: uploadError } = await supabase.storage
+        .from("payment-files")
+        .upload(fileName, file)
+
+      if (uploadError) {
+        console.error(uploadError)
+        alert("Receipt upload failed")
+        return
+      }
+
+      const { data } = supabase.storage
+        .from("payment-files")
+        .getPublicUrl(fileName)
+
+      const publicUrl = data.publicUrl
+
+      const now = new Date().toISOString()
+
+      const { error: updateError } = await supabase
+        .from("payment_requests")
+        .update({
+          receipt_url: publicUrl,
+          status:
+            freshRequest.status === "pending" ? "processing" : freshRequest.status,
+          processing_at:
+            freshRequest.status === "pending"
+              ? now
+              : freshRequest.processing_at,
+        })
+        .eq("id", request.id)
+        .is("receipt_url", null)
+        .neq("status", "paid")
+        .neq("status", "failed")
+
+      if (updateError) {
+        console.error(updateError)
+        alert("Receipt saved, but database update failed")
+        return
+      }
+
+      setOperatorActionMessage("Receipt uploaded and locked.")
+      fetchRequests()
+    } finally {
+      setUploadingReceiptId(null)
+    }
   }
 
   async function lookupTracking(e) {
@@ -1360,6 +1497,12 @@ export default function App() {
               </div>
             </div>
 
+            {operatorActionMessage && (
+              <div className="mb-5 bg-blue-50 border border-blue-100 text-blue-800 rounded-2xl p-4 font-semibold">
+                {operatorActionMessage}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
               {["all", "pending", "processing", "paid", "failed"].map(
                 (filter) => (
@@ -1415,6 +1558,11 @@ export default function App() {
                 const isFailed = request.status === "failed"
                 const isLocked = isPaid || isFailed
                 const hasReceipt = !!request.receipt_url
+                const isReceiptUploading = uploadingReceiptId === request.id
+                const isStatusWorking = statusActionId === request.id
+                const isPaidWorking = paidActionId === request.id
+                const anyOperatorAction =
+                  !!statusActionId || !!paidActionId || !!uploadingReceiptId
                 const processingTime = request.processing_at
                   ? new Date(request.processing_at).toLocaleString()
                   : null
@@ -1447,19 +1595,7 @@ export default function App() {
                             onOpen={() => openCustomerTracking(request)}
                           />
 
-                          {request.paid_at && (
-                            <p className="text-green-600 mt-2 font-semibold">
-                              Paid locked ✓{" "}
-                              {new Date(request.paid_at).toLocaleString()}
-                            </p>
-                          )}
-
-                          {request.email_sent_at && (
-                            <p className="text-blue-600 mt-1 font-semibold">
-                              Final email sent ✓{" "}
-                              {new Date(request.email_sent_at).toLocaleString()}
-                            </p>
-                          )}
+                          <OperatorAuditBox request={request} locked />
                         </div>
 
                         <StatusBadge status={request.status} />
@@ -1555,6 +1691,8 @@ export default function App() {
                             ? `Processing • ${getTimeAgo(
                                 request.processing_at || request.created_at
                               )}`
+                            : request.status === "failed"
+                            ? "Failed locked"
                             : `Pending • ${getTimeAgo(request.created_at)}`}
                         </p>
                       </div>
@@ -1601,12 +1739,18 @@ export default function App() {
                         <input
                           type="file"
                           accept="image/*,.pdf"
-                          disabled={isLocked}
+                          disabled={isLocked || isReceiptUploading || anyOperatorAction}
                           onChange={(e) =>
                             uploadReceipt(request, e.target.files[0])
                           }
                           className="w-full border rounded-xl p-4 disabled:bg-gray-100 disabled:cursor-not-allowed"
                         />
+                      )}
+
+                      {isReceiptUploading && (
+                        <p className="text-sm text-blue-600 font-semibold mt-2">
+                          Uploading receipt...
+                        </p>
                       )}
                     </div>
 
@@ -1628,51 +1772,72 @@ export default function App() {
                         placeholder="Internal notes"
                         className="w-full border rounded-2xl p-3 text-sm"
                         rows={3}
+                        disabled={isLocked}
                         onBlur={(e) =>
                           updateOperatorNote(request.id, e.target.value)
                         }
                       />
                     </div>
 
+                    <OperatorAuditBox request={request} locked={isLocked} />
+
                     <div className="flex gap-3 mt-6 flex-wrap">
                       <button
-                        disabled={isLocked || request.status === "processing"}
+                        disabled={
+                          isLocked ||
+                          request.status === "processing" ||
+                          anyOperatorAction
+                        }
                         onClick={() => updateStatus(request, "processing")}
                         className={`px-5 py-3 rounded-xl font-bold text-white ${
-                          isLocked || request.status === "processing"
+                          isLocked ||
+                          request.status === "processing" ||
+                          anyOperatorAction
                             ? "bg-gray-300 cursor-not-allowed"
                             : "bg-sky-500 hover:bg-sky-600"
                         }`}
                       >
-                        {request.status === "processing"
+                        {isStatusWorking
+                          ? "Working..."
+                          : request.status === "processing"
                           ? "✓ Processing"
                           : "Processing"}
                       </button>
 
                       <button
                         disabled={
-                          isLocked || !hasReceipt || paidActionId === request.id
+                          isLocked ||
+                          !hasReceipt ||
+                          isPaidWorking ||
+                          anyOperatorAction
                         }
                         onClick={() => updateStatus(request, "paid")}
                         className={`px-5 py-3 rounded-xl font-bold text-white ${
-                          isLocked || !hasReceipt || paidActionId === request.id
+                          isLocked ||
+                          !hasReceipt ||
+                          isPaidWorking ||
+                          anyOperatorAction
                             ? "bg-gray-300 cursor-not-allowed"
                             : "bg-green-500 hover:bg-green-600"
                         }`}
                       >
-                        {paidActionId === request.id ? "Sending..." : "Paid"}
+                        {isPaidWorking ? "Sending..." : "Paid"}
                       </button>
 
                       <button
-                        disabled={isLocked}
+                        disabled={isLocked || anyOperatorAction}
                         onClick={() => updateStatus(request, "failed")}
                         className={`px-5 py-3 rounded-xl font-bold text-white ${
-                          isLocked
+                          isLocked || anyOperatorAction
                             ? "bg-gray-300 cursor-not-allowed"
                             : "bg-red-500 hover:bg-red-600"
                         }`}
                       >
-                        {isFailed ? "✓ Failed" : "Failed"}
+                        {isStatusWorking && statusActionId === request.id
+                          ? "Working..."
+                          : isFailed
+                          ? "✓ Failed"
+                          : "Failed"}
                       </button>
                     </div>
                   </div>
@@ -2051,6 +2216,25 @@ function TrackingLine({ trackingId, copiedId, onCopy, onOpen }) {
           </button>
         </>
       )}
+    </div>
+  )
+}
+
+function OperatorAuditBox({ request, locked }) {
+  return (
+    <div className="mt-4 bg-gray-50 rounded-2xl p-4 text-sm text-gray-600">
+      <p className="font-bold text-gray-700 mb-2">
+        Operator audit {locked ? "• locked" : ""}
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <p>Submitted: {formatDateTime(request.created_at)}</p>
+        <p>Processing: {formatDateTime(request.processing_at)}</p>
+        <p>Paid: {formatDateTime(request.paid_at)}</p>
+        <p>Email sent: {formatDateTime(request.email_sent_at)}</p>
+        <p>Receipt: {request.receipt_url ? "Locked ✓" : "Not uploaded"}</p>
+        <p>Status lock: {locked ? "Locked ✓" : "Open"}</p>
+      </div>
     </div>
   )
 }
