@@ -3,6 +3,8 @@ import { supabase } from "./lib/supabase"
 
 const OPERATOR_PIN = import.meta.env.VITE_OPERATOR_PIN || "2400"
 const OPERATOR_AUTO_LOCK_MS = 15 * 60 * 1000
+const REQUEST_EXPIRY_HOURS = 24
+const CARD_SERVICE_FEE_RATE = 0.077
 
 const COUNTRY_CODES = [
   { name: "Thailand", code: "+66" },
@@ -98,6 +100,55 @@ function isToday(dateString) {
 function formatDateTime(dateString) {
   if (!dateString) return "—"
   return new Date(dateString).toLocaleString()
+}
+
+function getEstimatedServiceFee(amount) {
+  const value = Number(amount || 0)
+  if (!value || Number.isNaN(value)) return 0
+  return Number((value * CARD_SERVICE_FEE_RATE).toFixed(2))
+}
+
+function getEstimatedTotal(amount) {
+  const value = Number(amount || 0)
+  if (!value || Number.isNaN(value)) return 0
+  return Number((value + getEstimatedServiceFee(value)).toFixed(2))
+}
+
+function getRecipientPreview(formData) {
+  if (formData.reason_type === "condo") {
+    return formData.condo_name?.trim() || "Condo / building pending"
+  }
+
+  if (formData.reason_type === "government") {
+    return formData.agency_name?.trim() || "Agency pending"
+  }
+
+  if (formData.reason_type === "service") {
+    return formData.service_name?.trim() || "Recipient pending verification"
+  }
+
+  return "Recipient pending verification"
+}
+
+function getExpiryAt(dateString) {
+  if (!dateString) return null
+  const created = new Date(dateString)
+  return new Date(created.getTime() + REQUEST_EXPIRY_HOURS * 60 * 60 * 1000)
+}
+
+function isRequestExpired(request) {
+  if (!request || request.status !== "pending" || !request.created_at) return false
+  const expiresAt = getExpiryAt(request.created_at)
+  return expiresAt ? new Date() > expiresAt : false
+}
+
+function getCustomerStatusLabel(status, expired = false) {
+  if (expired) return "Action required"
+  if (status === "pending") return "Request submitted"
+  if (status === "processing") return "Payment received"
+  if (status === "paid") return "Payment completed"
+  if (status === "failed") return "Action required"
+  return "Request received"
 }
 
 function sortRequestsForOps(list) {
@@ -530,6 +581,12 @@ export default function App() {
       return
     }
 
+    if (isRequestExpired(freshRequest)) {
+      setOperatorActionMessage("Request expired after 24 hours. Ask customer to submit again.")
+      fetchRequests()
+      return
+    }
+
     const updatePayload = { status }
 
     if (status === "processing") {
@@ -686,6 +743,12 @@ export default function App() {
 
     if (freshRequest.status === "failed") {
       setOperatorActionMessage("Failed request is locked.")
+      fetchRequests()
+      return
+    }
+
+    if (isRequestExpired(freshRequest)) {
+      setOperatorActionMessage("Request expired after 24 hours. Ask customer to submit again.")
       fetchRequests()
       return
     }
@@ -871,9 +934,14 @@ export default function App() {
         .toLowerCase()
         .trim()
 
+      const expired = isRequestExpired(r)
       const matchesSearch = searchableValue.includes(search.toLowerCase())
       const matchesFilter =
-        activeFilter === "all" ? true : r.status === activeFilter
+        activeFilter === "all"
+          ? true
+          : activeFilter === "expired"
+          ? expired
+          : r.status === activeFilter && !expired
 
       return matchesSearch && matchesFilter
     })
@@ -883,10 +951,11 @@ export default function App() {
 
   const counts = {
     all: requests.length,
-    pending: requests.filter((r) => r.status === "pending").length,
+    pending: requests.filter((r) => r.status === "pending" && !isRequestExpired(r)).length,
     processing: requests.filter((r) => r.status === "processing").length,
     paid: requests.filter((r) => r.status === "paid").length,
     failed: requests.filter((r) => r.status === "failed").length,
+    expired: requests.filter((r) => isRequestExpired(r)).length,
   }
 
   const todayMetrics = useMemo(() => {
@@ -1370,29 +1439,10 @@ export default function App() {
                       description="Confirm your request before sending."
                     />
 
-                    <div className="bg-slate-50 rounded-3xl p-5 space-y-3">
-                      <p>
-                        <strong>QR / Invoice:</strong>{" "}
-                        {qrFile ? qrFile.name : "No file selected"}
-                      </p>
-
-                      <p>
-                        <strong>Method:</strong> {formData.payment_method}
-                      </p>
-
-                      <p>
-                        <strong>Amount:</strong> {formatTHB(formData.amount_thb)}
-                      </p>
-
-                      <p>
-                        <strong>Phone:</strong> {formData.country_code}{" "}
-                        {formData.customer_phone}
-                      </p>
-
-                      <p>
-                        <strong>Email:</strong> {formData.customer_email}
-                      </p>
-                    </div>
+                    <PaymentPreviewCard
+                      formData={formData}
+                      qrFile={qrFile}
+                    />
 
                     <div className="grid grid-cols-2 gap-3 mt-5">
                       <button
@@ -1504,7 +1554,7 @@ export default function App() {
             )}
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-              {["all", "pending", "processing", "paid", "failed"].map(
+              {["all", "pending", "processing", "paid", "failed", "expired"].map(
                 (filter) => (
                   <button
                     key={filter}
@@ -1521,12 +1571,13 @@ export default function App() {
               )}
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
               <Stat label="All" value={counts.all} />
               <Stat label="Pending" value={counts.pending} />
               <Stat label="Processing" value={counts.processing} />
               <Stat label="Paid" value={counts.paid} />
               <Stat label="Failed" value={counts.failed} />
+              <Stat label="Expired" value={counts.expired} />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
@@ -1556,7 +1607,8 @@ export default function App() {
               {filteredRequests.map((request) => {
                 const isPaid = request.status === "paid"
                 const isFailed = request.status === "failed"
-                const isLocked = isPaid || isFailed
+                const isExpired = isRequestExpired(request)
+                const isLocked = isPaid || isFailed || isExpired
                 const hasReceipt = !!request.receipt_url
                 const isReceiptUploading = uploadingReceiptId === request.id
                 const isStatusWorking = statusActionId === request.id
@@ -1598,7 +1650,7 @@ export default function App() {
                           <OperatorAuditBox request={request} locked />
                         </div>
 
-                        <StatusBadge status={request.status} />
+                        <StatusBadge status={isExpired ? "expired" : request.status} />
                       </div>
 
                       <div className="flex gap-3 mt-5 flex-wrap">
@@ -1684,7 +1736,7 @@ export default function App() {
                       </div>
 
                       <div className="flex flex-col items-end gap-2">
-                        <StatusBadge status={request.status} />
+                        <StatusBadge status={isExpired ? "expired" : request.status} />
 
                         <p className="text-sm font-semibold text-gray-500">
                           {request.status === "processing"
@@ -1692,7 +1744,9 @@ export default function App() {
                                 request.processing_at || request.created_at
                               )}`
                             : request.status === "failed"
-                            ? "Failed locked"
+                            ? "Action required"
+                            : isExpired
+                            ? "Expired • 24 hr"
                             : `Pending • ${getTimeAgo(request.created_at)}`}
                         </p>
                       </div>
@@ -1963,10 +2017,11 @@ function PublicTrackingPanel({
 
 function TrackingStatusPage({ trackingResult, setPreview }) {
   const status = trackingResult.status
-  const isPending = status === "pending"
+  const isExpired = isRequestExpired(trackingResult)
+  const isPending = status === "pending" && !isExpired
   const isProcessing = status === "processing"
   const isPaid = status === "paid"
-  const isFailed = status === "failed"
+  const isFailed = status === "failed" || isExpired
 
   return (
     <div className="mt-5 bg-white rounded-3xl border p-5">
@@ -1985,7 +2040,7 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
           </p>
         </div>
 
-        <StatusBadge status={status} />
+        <CustomerStatusBadge status={status} expired={isExpired} />
       </div>
 
       <div className="mt-5">
@@ -1995,21 +2050,20 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
       <div className="mt-5 grid gap-3">
         {isPending && (
           <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
-            <p className="font-bold text-blue-700">Request received</p>
+            <p className="font-bold text-blue-700">Request submitted</p>
 
             <p className="text-sm text-gray-600">
-              Your request is waiting for operator review.
+              Your request is in the PayThai queue. We will update this page as soon as processing starts.
             </p>
           </div>
         )}
 
         {isProcessing && (
           <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
-            <p className="font-bold text-orange-700">Processing now</p>
+            <p className="font-bold text-orange-700">Payment received</p>
 
             <p className="text-sm text-gray-600">
-              Your request is being handled. Receipt confirmation will appear
-              here once available.
+              Your request is being processed. Receipt confirmation will appear here once available.
             </p>
           </div>
         )}
@@ -2027,10 +2081,10 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
 
         {isFailed && (
           <div className="bg-red-50 border border-red-100 rounded-2xl p-4">
-            <p className="font-bold text-red-700">Request needs attention</p>
+            <p className="font-bold text-red-700">Action required</p>
 
             <p className="text-sm text-gray-600">
-              Please contact support with your Tracking ID.
+              Please contact support with your Tracking ID so we can help complete or restart this request.
             </p>
           </div>
         )}
@@ -2065,37 +2119,36 @@ function TrackingStatusPage({ trackingResult, setPreview }) {
 
 function StatusTimeline({ trackingResult }) {
   const status = trackingResult.status
+  const expired = isRequestExpired(trackingResult)
 
   const steps = [
     {
-      key: "pending",
-      label: "Request received",
+      key: "submitted",
+      label: "Submitted",
       complete: ["pending", "processing", "paid"].includes(status),
+      active: status === "pending" && !expired,
       time: trackingResult.created_at,
     },
     {
-      key: "processing",
-      label: "Processing",
+      key: "received",
+      label: "Payment received",
       complete: ["processing", "paid"].includes(status),
+      active: status === "processing",
       time: trackingResult.processing_at,
     },
     {
-      key: "paid",
+      key: "completed",
       label: "Payment completed",
       complete: status === "paid",
+      active: false,
       time: trackingResult.paid_at,
     },
     {
       key: "receipt",
       label: "Receipt ready",
       complete: !!trackingResult.receipt_url,
-      time: trackingResult.paid_at,
-    },
-    {
-      key: "email",
-      label: "Final email sent",
-      complete: !!trackingResult.email_sent_at,
-      time: trackingResult.email_sent_at,
+      active: false,
+      time: trackingResult.receipt_url ? trackingResult.paid_at : null,
     },
   ]
 
@@ -2104,19 +2157,21 @@ function StatusTimeline({ trackingResult }) {
       {steps.map((step) => (
         <div key={step.key} className="flex items-start gap-3">
           <div
-            className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-sm ${
+            className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
               step.complete
                 ? "bg-green-500 text-white"
+                : step.active
+                ? "bg-sky-500 text-white"
                 : "bg-gray-200 text-gray-500"
             }`}
           >
-            {step.complete ? "✓" : "•"}
+            {step.complete ? "✓" : step.active ? "•" : ""}
           </div>
 
           <div>
             <p
               className={`font-bold ${
-                step.complete ? "text-gray-900" : "text-gray-400"
+                step.complete || step.active ? "text-gray-900" : "text-gray-400"
               }`}
             >
               {step.label}
@@ -2130,6 +2185,72 @@ function StatusTimeline({ trackingResult }) {
           </div>
         </div>
       ))}
+
+      {expired && (
+        <div className="mt-3 bg-red-50 border border-red-100 rounded-2xl p-3 text-sm text-red-700 font-semibold">
+          This request expired after 24 hours. Please contact support or submit a fresh request.
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PaymentPreviewCard({ formData, qrFile }) {
+  const amount = Number(formData.amount_thb || 0)
+  const estimatedFee = getEstimatedServiceFee(amount)
+  const estimatedTotal = getEstimatedTotal(amount)
+  const recipientPreview = getRecipientPreview(formData)
+
+  return (
+    <div className="bg-slate-50 rounded-3xl p-5 space-y-4 border border-slate-100">
+      <div>
+        <p className="text-sm text-gray-500 font-semibold">Payment Preview</p>
+        <h3 className="text-2xl font-bold mt-1">
+          {amount ? formatTHB(amount) : "Amount pending"}
+        </h3>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+        <div className="bg-white rounded-2xl p-4 border">
+          <p className="text-gray-500">Recipient status</p>
+          <p className="font-bold">{recipientPreview}</p>
+          <p className="text-xs text-gray-400 mt-1">Verified before completion</p>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border">
+          <p className="text-gray-500">QR / Invoice</p>
+          <p className="font-bold">{qrFile ? qrFile.name : "No file selected"}</p>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border">
+          <p className="text-gray-500">Estimated service fee</p>
+          <p className="font-bold">
+            {estimatedFee ? formatTHB(estimatedFee) : "Confirmed before processing"}
+          </p>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border">
+          <p className="text-gray-500">Estimated total</p>
+          <p className="font-bold">
+            {estimatedTotal ? formatTHB(estimatedTotal) : "Confirmed before processing"}
+          </p>
+        </div>
+      </div>
+
+      <div className="text-sm text-gray-600">
+        <p>
+          <strong>Method:</strong> {formData.payment_method}
+        </p>
+        <p>
+          <strong>Phone:</strong> {formData.country_code} {formData.customer_phone}
+        </p>
+        <p>
+          <strong>Email:</strong> {formData.customer_email}
+        </p>
+        <p className="text-xs text-gray-400 mt-3">
+          Final fee and recipient details are verified before processing.
+        </p>
+      </div>
     </div>
   )
 }
@@ -2234,6 +2355,8 @@ function OperatorAuditBox({ request, locked }) {
         <p>Email sent: {formatDateTime(request.email_sent_at)}</p>
         <p>Receipt: {request.receipt_url ? "Locked ✓" : "Not uploaded"}</p>
         <p>Status lock: {locked ? "Locked ✓" : "Open"}</p>
+        <p>Expires: {request.status === "pending" ? formatDateTime(getExpiryAt(request.created_at)) : "—"}</p>
+        <p>Expired: {isRequestExpired(request) ? "Yes" : "No"}</p>
       </div>
     </div>
   )
@@ -2304,7 +2427,29 @@ function Stat({ label, value }) {
   )
 }
 
+function CustomerStatusBadge({ status, expired }) {
+  const label = getCustomerStatusLabel(status, expired)
+
+  return (
+    <div
+      className={`px-4 py-2 rounded-full text-white font-bold whitespace-nowrap ${
+        expired || status === "failed"
+          ? "bg-red-500"
+          : status === "pending"
+          ? "bg-blue-500"
+          : status === "processing"
+          ? "bg-orange-500"
+          : "bg-green-500"
+      }`}
+    >
+      {label}
+    </div>
+  )
+}
+
 function StatusBadge({ status }) {
+  const label = status === "expired" ? "expired" : status
+
   return (
     <div
       className={`px-4 py-2 rounded-full text-white font-bold capitalize whitespace-nowrap ${
@@ -2317,7 +2462,7 @@ function StatusBadge({ status }) {
           : "bg-red-500"
       }`}
     >
-      {status}
+      {label}
     </div>
   )
 }
