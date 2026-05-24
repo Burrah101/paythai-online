@@ -171,7 +171,14 @@ function sortRequestsForOps(list) {
 
 export default function App() {
   const [view, setView] = useState(() => {
-    return localStorage.getItem("paythai_view") || "customer"
+    const path = window.location.pathname.toLowerCase()
+    const params = new URLSearchParams(window.location.search)
+
+    if (path === "/operator" || params.get("operator") === "1") {
+      return "operator"
+    }
+
+    return "customer"
   })
 
   const [customerStep, setCustomerStep] = useState(() => {
@@ -223,7 +230,9 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState("")
 
   useEffect(() => {
-    localStorage.setItem("paythai_view", view)
+    if (view === "customer") {
+      localStorage.removeItem("paythai_view")
+    }
   }, [view])
 
   useEffect(() => {
@@ -1000,38 +1009,25 @@ export default function App() {
             </h1>
           </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={() => setView("customer")}
-              className={`px-4 py-2 rounded-xl font-semibold ${
-                view === "customer"
-                  ? "bg-sky-500 text-white"
-                  : "bg-gray-100"
-              }`}
-            >
-              Customer
-            </button>
-
-            <button
-              onClick={() => setView("operator")}
-              className={`px-4 py-2 rounded-xl font-semibold ${
-                view === "operator"
-                  ? "bg-sky-500 text-white"
-                  : "bg-gray-100"
-              }`}
-            >
-              Operator
-            </button>
-
-            {operatorUnlocked && (
+          {view === "operator" && (
+            <div className="flex gap-2">
               <button
-                onClick={logoutOperator}
-                className="px-4 py-2 rounded-xl font-semibold bg-gray-800 text-white"
+                onClick={() => setView("customer")}
+                className="px-4 py-2 rounded-xl font-semibold bg-gray-100"
               >
-                Lock
+                Customer View
               </button>
-            )}
-          </div>
+
+              {operatorUnlocked && (
+                <button
+                  onClick={logoutOperator}
+                  className="px-4 py-2 rounded-xl font-semibold bg-gray-800 text-white"
+                >
+                  Lock
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {view === "customer" && (
@@ -1107,49 +1103,50 @@ export default function App() {
                 copiedId={copiedId}
                 copyTrackingId={copyTrackingId}
               />
+
               <div className="mt-6 text-center text-sm text-gray-500">
-  <div className="flex items-center justify-center gap-4 flex-wrap">
-    <button
-      type="button"
-      onClick={() =>
-        alert(
-          "PayThai Terms:\n\nManual review may be required during processing.\nService availability may vary."
-        )
-      }
-      className="hover:text-sky-600"
-    >
-      Terms
-    </button>
+                <div className="flex items-center justify-center gap-4 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      alert(
+                        "PayThai Terms:\n\nManual review may be required during processing.\nService availability may vary."
+                      )
+                    }
+                    className="hover:text-sky-600"
+                  >
+                    Terms
+                  </button>
 
-    <span>•</span>
+                  <span>•</span>
 
-    <button
-      type="button"
-      onClick={() =>
-        alert(
-          "PayThai Privacy:\n\nCustomer information is used only for payment coordination and support."
-        )
-      }
-      className="hover:text-sky-600"
-    >
-      Privacy
-    </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      alert(
+                        "PayThai Privacy:\n\nCustomer information is used only for payment coordination and support."
+                      )
+                    }
+                    className="hover:text-sky-600"
+                  >
+                    Privacy
+                  </button>
 
-    <span>•</span>
+                  <span>•</span>
 
-    <button
-      type="button"
-      onClick={() => alert("Contact:\n\nsupport@paythai.online")}
-      className="hover:text-sky-600"
-    >
-      Contact
-    </button>
-  </div>
+                  <button
+                    type="button"
+                    onClick={() => alert("Contact:\n\nsupport@paythai.online")}
+                    className="hover:text-sky-600"
+                  >
+                    Contact
+                  </button>
+                </div>
 
-  <p className="mt-3 text-xs text-gray-400">
-    Manual review may be required during processing.
-  </p>
-</div>
+                <p className="mt-3 text-xs text-gray-400">
+                  Manual review may be required during processing.
+                </p>
+              </div>
             </div>
 
             <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm">
@@ -2255,9 +2252,9 @@ function PaymentPreviewCard({ formData, qrFile }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
         <div className="bg-white rounded-2xl p-4 border">
-          <p className="text-gray-500">Recipient</p>
+          <p className="text-gray-500">Recipient status</p>
           <p className="font-bold">{recipientPreview}</p>
-          <p className="text-xs text-gray-400 mt-1">Verified during processing</p>
+          <p className="text-xs text-gray-400 mt-1">Verified before completion</p>
         </div>
 
         <div className="bg-white rounded-2xl p-4 border">
@@ -2506,7 +2503,6 @@ function StatusBadge({ status }) {
       }`}
     >
       {label}
-    
     </div>
   )
 }
